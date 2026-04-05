@@ -1,18 +1,25 @@
 # sentinel
 
-Deploy AI agents across your software lifecycle: review PRs, auto-fix issues, generate tests, enforce team standards — measurably, at scale.
+A framework for running AI agents in your software delivery pipeline. Git is the interface — PRs, diffs, and commits are inputs. Agents review, enforce, fix, and generate — triggered by the events your team already produces.
 
-Sentinel is a framework for building and governing AI agents in your software delivery pipeline. Git is the interface. PRs, diffs, commits, and issues are inputs. Agents review, fix, generate, and enforce — triggered by the events your team already produces.
+Sentinel is not a linter. It does not replace Semgrep, Checkov, Dependabot, or Gitleaks. Those tools catch known rule violations. Sentinel catches what requires judgment: the Terraform change that looks like one line but destroys a NAT gateway; the GitHub Actions workflow that is a privilege escalation path; the PR that renames a shared interface without updating its callers; the service that ships with no health check and no runbook.
 
-It is not a linter. It does not replace Semgrep, Checkov, Dependabot, or Gitleaks. Those tools catch known rule violations. Sentinel catches what requires judgment: the Terraform change that looks like one line but destroys a NAT gateway; the GitHub Actions workflow that is a privilege escalation path; the PR that changes a shared module interface without updating its three consumers; the service that ships with no health check, no alerts, and no runbook.
+**The building blocks:**
 
-Designed to be introduced incrementally — non-blocking on day one, as autonomous as the team decides over time. See [PLAN.md](./PLAN.md) for the full architecture, milestone breakdown, and how a team adopts it from zero to full automation.
+- **Skills** — composable analysis units. Each skill takes a diff and context, reasons via LLM, and returns typed findings. Skills are independent: run one or all, add your own.
+- **CLAUDE.md** — teach sentinel your team's conventions in plain English. Injected into every review as high-priority context. No DSL, no redeployment.
+- **Evals** — fixtures with expected verdicts. Quality is measured, not assumed. A prompt change that regresses below threshold fails the build.
+- **Judgment levels** — every finding has a severity. Start non-blocking on day one. Move findings to blocking (`fail_on: [critical]`, then `[critical, high]`) as you validate they are real.
+
+See [PLAN.md](./PLAN.md) for the full architecture and milestone breakdown.
 
 > This repo uses sentinel to review its own pull requests. The review history is part of the demo.
 
+---
+
 ## Quickstart
 
-Add sentinel to any repo in five lines. Create `.github/workflows/sentinel.yml`:
+Add sentinel to any repo. Create `.github/workflows/sentinel.yml`:
 
 ```yaml
 on: [pull_request]
@@ -22,28 +29,50 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: krmayankk/sentinel/.github/actions/sentinel@main
+      - uses: krmayankk/sentinel@main
         with:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-          fail-on: "high,critical"   # omit to run in warning-only mode
+          fail-on: ""   # empty = warning-only; use "high,critical" to block merge
 ```
 
-Add `ANTHROPIC_API_KEY` as a [repository secret](https://docs.github.com/en/actions/security-guides/encrypted-secrets). That's it — sentinel reviews every PR and posts findings as inline annotations and a comment.
+Add `ANTHROPIC_API_KEY` as a [repository secret](https://docs.github.com/en/actions/security-guides/encrypted-secrets). Sentinel reviews every PR and posts findings as inline annotations and a PR comment.
 
-**Teach sentinel your conventions.** Add a `CLAUDE.md` to your repo with a `## Completeness rules` section:
+**Start non-blocking.** Review the findings for a week. When you trust a severity level, add it to `fail-on`. The progression is explicit and team-controlled — no surprise CI failures on day one.
+
+---
+
+## Teaching sentinel your conventions
+
+Sentinel's built-in prompts cover universal patterns. Your team's specific conventions go in `CLAUDE.md`. Add a section:
 
 ```markdown
 ## Completeness rules
 - When a Terraform module variable changes, all callers under terraform/envs/ must be updated
-- When a new GHA action input is added, it must be forwarded in runs.steps.env and read in the entrypoint
+- All Lambda functions must have a dead-letter queue configured
+- New services require a runbook at docs/runbooks/<service>.md before merge
 - When a new required env var is added, k8s/configmaps/ and .env.example must reference it
 ```
 
-Sentinel injects this on every review. No redeployment — push to `CLAUDE.md` and the next PR picks it up.
+Push to `CLAUDE.md` and the next PR picks it up. No redeployment, no DSL to learn. Any engineer on the team can add or update rules.
 
-**Run locally** against any diff:
+---
+
+## Run locally
 
 ```bash
-pip install sentinel-ai
+git clone https://github.com/krmayankk/sentinel && cd sentinel
+pip install -e .
 sentinel review --diff my.patch --repo-path . --env .env
 ```
+
+---
+
+## How the verification works
+
+Sentinel uses a two-step approach to eliminate speculation:
+
+1. **LLM analysis** — the diff is sent to Claude. The model identifies what changed, reasons about what depends on it, and returns candidate findings with a `search_for` term for each gap it suspects.
+
+2. **Codebase verification** — for each candidate, sentinel greps the actual repository for the search term. Findings confirmed by real matches are reported with exact file paths and line numbers. Findings with no matches are dismissed — the LLM suspected a problem, but the codebase confirms it is clean.
+
+A finding is only reported when broken callers are confirmed to exist. No noise.

@@ -82,44 +82,51 @@ Each milestone solves one real pain. Each is immediately usable as a standalone 
 
 ---
 
-### v0.1 — Change completeness
+### v0.1 — Change completeness ✓
 
 **The problem.** A PR removes `var.enable_logging` from a shared Terraform module. Three environment configs still pass `enable_logging = true`. The PR is merged. The next `terraform apply` in production fails with `An argument named "enable_logging" is not expected here`. The outage was preventable.
 
 Sentinel reasons across files. It understands that a change to a module interface has consumers, that a changed gRPC proto has generated clients, that a renamed database column has references in application code. It flags the gap before merge.
 
-**What ships:**
+**What shipped:**
 - `ChangeCompletenessSkill`: cross-file impact reasoning — changed A, did you update B?
-- GitHub Action (BYOK), posts a summary comment, non-blocking by default
-- `sentinel.yml` with `fail_on: []` — safe to add to any repo immediately
+- Two-step LLM+grep verification: LLM identifies the search term; grep confirms real callers. Findings dismissed when no callers found — no speculation.
+- `CLAUDE.md` reader: injected into every skill's prompt as high-priority context. Teams write their rules in plain English; sentinel enforces them on every PR.
+- GitHub Action (BYOK), posts severity-grouped comment with confirmed caller locations
+- Self-review: sentinel runs on its own PRs. The review history is part of the demo.
+- `fail_on` env var — empty by default (warning-only); set to `high,critical` to block merge
 
 **Works on:** any repo, any language. The reasoning is about relationships between files, not syntax.
 
-**Lesson:** How to parse a git diff and structure it for an LLM. How to build a GitHub Action that calls the Claude API. The simplest possible useful AI review.
+**Lesson:** How to parse a git diff and structure it for an LLM. The LLM+grep verification pattern that eliminates speculative findings. How to build a GitHub Action that calls the Claude API. The CLAUDE.md customization surface — freeform English beats a DSL.
 
 ---
 
-### v0.2 — Your rules, not generic rules
+### v0.2 — `sentinel.yml` and structured configuration
 
-**The problem.** Your team has established standards that no generic tool enforces: all Lambda functions must have a dead-letter queue; all new services need a runbook before merging; all EKS deployments use IRSA, never instance profiles. These rules exist in a wiki no one reads. They get caught inconsistently in review — if at all. Messages silently disappear into dead Lambdas. Services ship to production with no runbook.
-
-Sentinel reads `CLAUDE.md` from the target repo and uses it as high-priority context in every review. You write your rules in plain English, once. Sentinel enforces them on every PR.
+**The problem.** CLAUDE.md handles conventions expressed in natural language. But teams also need structured control: route different skill sets to different directory patterns, set per-skill severity overrides, define exceptions for specific file paths. This can't live cleanly in plain English.
 
 **What ships:**
-- `CLAUDE.md` reader — injected into every skill's system prompt
-- `sentinel.yml` structured rule overrides (severity, file patterns, exceptions)
-- Sentinel begins reviewing its own PRs. The self-referential demo starts here.
+- `sentinel.yml` support: `fail_on`, `skills`, `file_routing` (different skills for `terraform/`, `k8s/`, `.github/workflows/`), per-skill severity overrides
+- First use of `sentinel.yml` in this repo — demonstrates the adoption arc
+- `.sentinel/skills/` in the target repo: custom skill prompts without forking sentinel
 
-**Example `CLAUDE.md` section:**
-```markdown
-## For code reviewers
-- All Lambda functions must have a dead-letter queue configured
-- New services require a runbook at docs/runbooks/<service>.md before merge
-- EKS deployments must use IRSA — never instance profiles or hardcoded keys
-- Terraform state must always use S3 backend — never local
+**Example `sentinel.yml`:**
+```yaml
+fail_on: [critical, high]
+
+skills:
+  - change_completeness
+  - iac_impact         # v0.3 skill, shown here for illustration
+
+routing:
+  - pattern: "terraform/**"
+    skills: [change_completeness, iac_impact]
+  - pattern: ".github/workflows/**"
+    skills: [workflow_security]
 ```
 
-**Lesson:** The difference between rule-based enforcement and reasoning-based enforcement. Why freeform English instructions produce better results than a DSL. How to design a customization surface that non-engineers can use.
+**Lesson:** The difference between rule-based enforcement and reasoning-based enforcement. Designing a configuration surface that operators (not just developers) can use. How structured config and freeform CLAUDE.md complement each other.
 
 ---
 
@@ -279,6 +286,6 @@ Three layers, each independently useful:
 
 ## This repository
 
-Sentinel reviews its own pull requests from v0.2 onward. The PR history is part of the demo — you can read the git log and see sentinel's reviews improving milestone by milestone. The eval harness runs in CI. Prompt regressions fail the build. The quality metrics are tracked and visible.
+Sentinel reviews its own pull requests from v0.1 onward. The PR history is part of the demo — you can read the git log and see sentinel's reviews improving milestone by milestone. The eval harness runs in CI. Prompt regressions fail the build. The quality metrics are tracked and visible.
 
 The goal is not just to ship a useful tool. It is to show, concretely and step by step, how any engineering team can introduce AI into their development process — measurably, incrementally, without replacing what already works.
