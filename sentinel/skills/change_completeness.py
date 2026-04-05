@@ -201,6 +201,7 @@ class ChangeCompletenessSkill(Skill):
 _EXCLUDE_DIRS = [
     ".git", ".venv", "venv", "node_modules", "dist", "build",
     "__pycache__", ".mypy_cache", ".ruff_cache", ".pytest_cache",
+    ".sentinel-action",  # sentinel's own stable checkout used to run the reviewer
 ]
 
 def _grep(term: str, repo_path: str, exclude_files: set[str] | None = None) -> list[str]:
