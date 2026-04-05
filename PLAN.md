@@ -1,10 +1,26 @@
 # Sentinel — Build Plan
 
+## Vision
+
+Sentinel is a framework for AI agents that reason about software changes with judgment — the class of analysis that requires understanding relationships, context, and consequences, not just rules.
+
+The first agents are **reviewers**: passive, read-only, they analyze diffs and produce findings. The architecture supports **actors**: agents that fix what they find, opening draft PRs for human review. The same judgment framework that reviews PRs can eventually manage infrastructure — detect drift, correlate incidents with recent changes, enforce deployment gates — because both require the same capability: reasoning about relationships across a system.
+
+**The progression:**
+
+| Phase | What sentinel does | Trust level |
+|---|---|---|
+| Review (v0.1–v0.5) | Reads diffs, reasons about them, produces findings | Read-only. Human decides. |
+| Fix (v0.8) | Creates a branch and opens a draft PR for confirmed findings | Human reviews and merges. Sentinel does not self-merge. |
+| Operate (v1.0+) | Watches for drift, correlates incidents, enforces gates | Human sets policy. Sentinel acts within it. Git is always the interface. |
+
+Each phase builds on the one before it. You cannot fix what you cannot judge. You cannot operate what you cannot fix. The milestones below build the judgment layer first, then the action layer.
+
+---
+
 ## The problem
 
-Rule-based tools catch known violations. What they cannot do is reason about your specific codebase, your team's conventions, the blast radius of a change across files, or whether a PR is actually complete. These are the things that cause incidents — not missing semicolons.
-
-Sentinel fills that gap. It reviews pull requests the way a senior engineer would: by understanding intent, cross-referencing related files, applying team-specific standards, and flagging things that look technically valid but are operationally wrong.
+Rule-based tools catch known violations. What they cannot do is reason about your specific codebase, your team's conventions, the blast radius of a change across files or repos, or whether a PR is actually complete. These are the things that cause incidents — not missing semicolons.
 
 ## What existing tools already handle (don't duplicate)
 
@@ -15,41 +31,45 @@ Sentinel fills that gap. It reviews pull requests the way a senior engineer woul
 | Checkov / tfsec | Known IaC misconfigurations |
 | Semgrep / CodeQL | Static analysis, known bug patterns |
 | ESLint / language linters | Style, syntax, type errors |
+| Polaris / kube-linter | K8s operational hygiene (probes, limits, PDB) |
+| Compilers (Go, Rust, Java, C#) | Interface breaks within a single compiled language |
 
-Sentinel does none of these. It does what requires judgment.
+Sentinel does none of these. It does what requires judgment: reasoning about relationships that cross the boundaries these tools cannot see.
 
 ---
 
 ## How it works
 
 ```
-Pull Request
-    │
-    ▼
+Event (PR, commit, schedule, incident)
+    |
+    v
 Context Assembly
-  ├── git diff (structured per file)
-  ├── CLAUDE.md (your team's rules, plain English)
-  ├── sentinel.yml (which skills, which thresholds)
-  ├── past PR history (semantic retrieval via GitHub API)
-  └── incident data (postmortem issues, linked PRs)
-    │
-    ▼
-Skill Execution (parallel)
-  ├── ChangeCompletenessSkill
-  ├── IaCImpactSkill
-  ├── WorkflowSecuritySkill
-  ├── OperationalReadinessSkill
-  └── ArchitecturalConsistencySkill
-    │
-    ▼
-Synthesis → GitHub Review
-  ├── Inline line comments on specific findings
-  ├── Summary comment with severity breakdown
-  └── Check run: pass / warn / block (configurable)
-    │
-    ▼
-Eval Recording (async)
-  └── LLM-as-judge scores the review → metrics → prompt improvement
+  |-- git diff (structured per file)
+  |-- CLAUDE.md (your team's rules, plain English)
+  |-- sentinel.yml (which skills, which thresholds)
+  |-- .sentinel/skills/ (team-defined custom skills)
+  |-- external repos (cross-repo caller search)
+  |-- past PR history + incidents (semantic retrieval)
+    |
+    v
+Skill Execution (parallel, per sentinel.yml routing)
+  |-- ChangeCompletenessSkill      <- v0.1: did you update all the dependents?
+  |-- ContractDriftSkill           <- v0.3: cross-boundary interface contracts
+  |-- WorkflowSecuritySkill        <- v0.4: GHA privilege escalation paths
+  |-- [.sentinel/skills/*.md]      <- v0.2+: team-defined, no fork needed
+    |
+    v
+Verification (LLM+grep two-step)
+  |-- For each finding: grep the repo (and external repos) for the search term
+  |-- Callers found -> finding confirmed, severity elevated, exact locations reported
+  |-- No callers found -> finding dismissed (no speculation)
+    |
+    v
+Output -> GitHub
+  |-- Per-skill annotations: "[ChangeCompleteness] HIGH: missing caller update"
+  |-- Summary comment with severity breakdown, per skill
+  |-- Check run: pass / warn / block (configurable per skill via sentinel.yml)
 ```
 
 ---
@@ -58,17 +78,9 @@ Eval Recording (async)
 
 Every finding has a severity: `critical`, `high`, `medium`, `low`.
 
-In `sentinel.yml`:
-
 ```yaml
-fail_on: []          # day one: everything is a warning, nothing blocks
-```
-
-```yaml
-fail_on: [critical]  # month one: only block on critical findings
-```
-
-```yaml
+fail_on: []                # day one: everything is a warning, nothing blocks
+fail_on: [critical]        # month one: only block on critical findings
 fail_on: [critical, high]  # when you trust it: block on high severity too
 ```
 
@@ -76,13 +88,102 @@ Start with zero friction. Move findings to blocking as you validate they are rea
 
 ---
 
-## Milestones
+## Customization surface
 
-Each milestone solves one real pain. Each is immediately usable as a standalone GitHub Action.
+Three layers. Each solves a different problem. Each works independently.
+
+### Layer 1: `CLAUDE.md` — teach existing skills your conventions
+
+Every repo has conventions no generic tool knows. Write them in plain English. Sentinel injects them into every skill's prompt as high-priority context.
+
+```markdown
+# CLAUDE.md
+## Completeness rules
+- When a Terraform module variable changes, all callers under terraform/envs/ must be updated
+- All Lambda functions must have a dead-letter queue configured
+- New IAM roles must have a permission boundary attached
+
+## Architecture rules
+- Services must not import directly from other services' internal packages
+- Database access must go through the repository layer, never raw SQL in handlers
+```
+
+**Who uses it:** Any engineer on the team. No code, no DSL, no redeployment. Push to `CLAUDE.md` and the next PR picks it up.
+
+**What it controls:** What the built-in skills look for. The same `ChangeCompletenessSkill` checks different things in different repos based on what `CLAUDE.md` teaches it.
+
+### Layer 2: `sentinel.yml` — control what runs and how
+
+Structured configuration for the runner: which skills, which file patterns, which severity levels block merge, which external repos to search.
+
+```yaml
+fail_on: [critical, high]
+
+skills:
+  - change_completeness
+  - contract_drift
+  - cost_attribution    # custom skill from .sentinel/skills/
+
+routing:
+  - pattern: "terraform/**"
+    skills: [change_completeness, contract_drift]
+    fail_on: [critical, high, medium]   # stricter for IaC
+  - pattern: ".github/workflows/**"
+    skills: [workflow_security]
+
+context:
+  external_repos:
+    - repo: my-org/shared-modules
+      path: modules/
+```
+
+**Who uses it:** Platform team, tech leads. Controls the operational behavior — what runs, what blocks, what searches where.
+
+**What it controls:** The runner. Not what skills look for (that's CLAUDE.md), but which skills run on which files and what happens when they find something.
+
+### Layer 3: `.sentinel/skills/` — define entirely new judgment checks
+
+Custom skill prompts in the target repo. Each markdown file defines a new judgment check that runs as a first-class skill alongside built-in ones.
+
+```markdown
+# .sentinel/skills/cost_attribution.md
+Check that every new AWS resource (S3, RDS, Lambda, ECS, etc.) has a
+`cost_center` tag. Missing tags on production resources have caused
+unattributed spend incidents. Severity: high for production resources
+(anything under terraform/envs/prod/), medium for staging/dev.
+```
+
+```markdown
+# .sentinel/skills/api_versioning.md
+When a public API endpoint changes its request or response schema, check
+that the API version has been bumped and a migration guide entry exists
+in docs/api/migrations/. Breaking changes to unversioned endpoints are
+critical — they break all existing clients silently.
+```
+
+**Who uses it:** Senior engineers, architects. Define domain-specific judgment that is unique to your system — not generic enough for a built-in skill, too important to leave to memory.
+
+**What it controls:** What sentinel checks for. New skills, not new rules for existing skills (that's CLAUDE.md). Each file is a self-contained judgment check that the framework loads, runs, and reports independently.
+
+### How the layers compose
+
+| Layer | What it controls | Who writes it | Example |
+|---|---|---|---|
+| `CLAUDE.md` | What existing skills look for | Any engineer | "Lambda functions need a DLQ" |
+| `sentinel.yml` | Which skills run, what blocks merge | Platform team | Route IaC skills to `terraform/**` only |
+| `.sentinel/skills/` | New judgment checks | Architects | Cost attribution, API versioning |
+
+A team starts with just `CLAUDE.md` on day one. Adds `sentinel.yml` when they want routing and blocking. Adds `.sentinel/skills/` when they need judgment checks no built-in skill covers. Each layer is a separate commit, a separate decision.
 
 ---
 
-### v0.1 — Change completeness ✓
+## Milestones
+
+Each milestone is additive and independently useful. A team running v0.1 gets value immediately. Each subsequent version widens the judgment surface or deepens the framework capability.
+
+---
+
+### v0.1 — Change completeness (shipped)
 
 **The problem.** A PR removes `var.enable_logging` from a shared Terraform module. Three environment configs still pass `enable_logging = true`. The PR is merged. The next `terraform apply` in production fails with `An argument named "enable_logging" is not expected here`. The outage was preventable.
 
@@ -91,64 +192,74 @@ Sentinel reasons across files. It understands that a change to a module interfac
 **What shipped:**
 - `ChangeCompletenessSkill`: cross-file impact reasoning — changed A, did you update B?
 - Two-step LLM+grep verification: LLM identifies the search term; grep confirms real callers. Findings dismissed when no callers found — no speculation.
-- `CLAUDE.md` reader: injected into every skill's prompt as high-priority context. Teams write their rules in plain English; sentinel enforces them on every PR.
+- `CLAUDE.md` reader: injected into the skill's prompt as high-priority context. Teams write their rules in plain English; sentinel enforces them on every PR.
 - GitHub Action (BYOK), posts severity-grouped comment with confirmed caller locations
 - Self-review: sentinel runs on its own PRs. The review history is part of the demo.
 - `fail_on` env var — empty by default (warning-only); set to `high,critical` to block merge
 
 **Works on:** any repo, any language. The reasoning is about relationships between files, not syntax.
 
-**Lesson:** How to parse a git diff and structure it for an LLM. The LLM+grep verification pattern that eliminates speculative findings. How to build a GitHub Action that calls the Claude API. The CLAUDE.md customization surface — freeform English beats a DSL.
+**What this proved:** The LLM+grep two-step eliminates speculation. Judgment-level review is possible with a single API call plus codebase verification. CLAUDE.md as a customization surface works — freeform English beats a DSL.
 
 ---
 
-### v0.2 — `sentinel.yml` and structured configuration
+### v0.2 — The framework (multi-skill runner)
 
-**The problem.** CLAUDE.md handles conventions expressed in natural language. But teams also need structured control: route different skill sets to different directory patterns, set per-skill severity overrides, define exceptions for specific file paths. This can't live cleanly in plain English.
+**The problem.** v0.1 hardcodes one skill: `ChangeCompletenessSkill(model=model).run(diff, context)`. There is no skill registry, no way to run multiple skills, no per-skill GHA output, no way for a team to add their own skill without editing sentinel's source. The Skill ABC exists but nothing uses it as a framework.
 
 **What ships:**
-- `sentinel.yml` support: `fail_on`, `skills`, `file_routing` (different skills for `terraform/`, `k8s/`, `.github/workflows/`), per-skill severity overrides
-- First use of `sentinel.yml` in this repo — demonstrates the adoption arc
-- `.sentinel/skills/` in the target repo: custom skill prompts without forking sentinel
+- **Skill runner**: reads `sentinel.yml`, discovers built-in + custom skills, runs them in parallel, aggregates findings tagged by skill name
+- **Per-skill GHA output**: annotations say `[ChangeCompleteness] HIGH: ...` not just `sentinel: ...`. PR comment groups findings by skill. Teams can see which judgment checks passed and which failed.
+- **`sentinel.yml` support**: `skills` list, `fail_on` (global and per-skill), `routing` (file pattern -> skill mapping)
+- **`.sentinel/skills/` loader**: custom skill prompt files in the target repo are loaded and executed as first-class skills. A team adds a file, the next PR runs it — no fork, no redeployment.
+- This repo ships its own `sentinel.yml` — the self-referential demo shows the framework in action.
 
-**Example `sentinel.yml`:**
-```yaml
-fail_on: [critical, high]
-
-skills:
-  - change_completeness
-  - iac_impact         # v0.3 skill, shown here for illustration
-
-routing:
-  - pattern: "terraform/**"
-    skills: [change_completeness, iac_impact]
-  - pattern: ".github/workflows/**"
-    skills: [workflow_security]
+**Example: a team adds their own skill without touching sentinel:**
+```
+.sentinel/skills/cost_attribution.md   <- custom skill prompt
+sentinel.yml                           <- registers it
+CLAUDE.md                              <- teaches it team conventions
 ```
 
-**Lesson:** The difference between rule-based enforcement and reasoning-based enforcement. Designing a configuration surface that operators (not just developers) can use. How structured config and freeform CLAUDE.md complement each other.
+GHA output:
+```
+[ChangeCompleteness] PASS — no findings
+[CostAttribution] HIGH — S3 bucket missing cost_center tag
+```
+
+**What this proves:** The framework is real. Skills are composable and extensible. Adding a new judgment check is a markdown file, not a code change.
 
 ---
 
-### v0.3 — Infrastructure change impact
+### v0.3 — Contract drift across boundaries
 
-**The problem.** A one-line PR changes a `subnet_id` on a NAT gateway in a shared VPC module. Terraform will destroy and recreate it. That is 2-3 minutes of internet connectivity loss for every private subnet in the VPC. The author did not know. The reviewer did not catch it. It merged on a Friday afternoon.
+**The problem.** A compiler catches broken interfaces within a single language. It cannot see across boundaries: a Protobuf schema changes but the generated client in a downstream service is not regenerated; a Kafka event schema drops a required field but three consumers still expect it; a shared Terraform module removes a variable but callers in two other repos still pass it; a database migration drops a column that application code in a separate repo still queries.
 
-Separately: a new Kubernetes Deployment is added with no `readinessProbe`, no resource limits, and the container runs as root. It passes all existing checks. During the first rollout, the pod receives traffic before the app is ready. Users see 502s for 90 seconds.
-
-Sentinel understands what infrastructure changes mean operationally, not just syntactically.
+These are the changes that cause distributed system incidents. They pass every linter, every type checker, and every unit test. They fail in production.
 
 **What ships:**
-- `IaCImpactSkill`: destroy/recreate detection on stateful resources, blast radius across module consumers, missing lifecycle guards
-- `OperationalReadinessSkill`: new k8s workloads checked for readiness/liveness probes, resource limits, non-root user, PodDisruptionBudget, HPA
-- Inline GitHub line comments pointing at specific lines
-- `fail_on: [critical]` is now meaningful — NAT gateway destroy is critical
+- `ContractDriftSkill`: reasoning about cross-boundary interface contracts — generated code (proto/OpenAPI/Avro), event schemas, shared module interfaces, database schema vs. application layer consistency
+- **Cross-repo search**: `sentinel.yml` accepts `context.external_repos` — paths from other repos are checked out and included in codebase verification. Same LLM+grep two-step, wider search scope.
+- `fail_on: [critical]` becomes meaningful here — a confirmed event schema break across three consumers is critical
+- New eval fixtures: proto change with stale generated client, Avro schema field removal with live consumer, cross-repo Terraform module caller
 
-**Lesson:** Domain-specific skills. How to combine a fast static pre-screening pass (regex/AST) with a slower LLM reasoning pass to reduce cost and latency. How to make findings actionable: specific line, specific consequence, specific fix.
+**Cross-repo configuration:**
+```yaml
+# sentinel.yml in my-org/platform
+context:
+  external_repos:
+    - repo: my-org/consumer-service
+      path: src/
+    - repo: my-org/data-pipeline
+      path: jobs/
+```
+Sentinel checks out those paths during review. A proto change in `platform` is verified against callers in `consumer-service` and `data-pipeline`. The same two-step, across repo boundaries.
+
+**What this proves:** The LLM+grep pattern extends across repositories without architectural changes. Cross-repo judgment — what no other tool provides — is a configuration change, not a code change.
 
 ---
 
-### v0.4 — GitHub Actions security
+### v0.4 — GHA workflow security
 
 **The problem.** A workflow is added that triggers on `pull_request_target`, checks out `${{ github.event.pull_request.head.sha }}`, and runs `npm install && npm test`. A malicious PR from a fork can modify `package.json` postinstall scripts to run arbitrary commands with the repository's `GITHUB_TOKEN` — which has write access. This is not a hypothetical. It is a documented class of attack that has hit major open-source projects.
 
@@ -158,89 +269,69 @@ Pattern matchers flag unpinned actions. They do not reason about the interaction
 - `WorkflowSecuritySkill`: dangerous trigger + checkout combinations, over-broad OIDC trust policies (wildcard branch matching), missing `permissions: {}` blocks, secrets passed via env instead of `--arg`, excessive token scopes
 - Severity `critical` by default for privilege escalation paths — blocks merge if `fail_on: [critical]` is set
 
-**Lesson:** AI reasoning about multi-step attack paths, not just pattern matching. How to write prompts that reason about interaction effects. When AI review adds value that static analysis genuinely cannot.
+**What this proves:** AI reasoning about multi-step attack paths, not just pattern matching. A new built-in skill plugs into the framework (v0.2) with zero runner changes — the extension point works.
 
 ---
 
-### v0.5 — Measuring whether it works
+### v0.5 — Measuring whether it works (evals)
 
-**The problem.** You have been running sentinel for a month. Is it catching real things or generating noise? You have no idea. You changed the IaC prompt to improve blast radius detection and now it flags every `count = 0` resource as a misconfiguration — 40% false positive rate, up from 8%. You do not know this yet. Neither does anyone else.
+**The problem.** You have been running sentinel for a month. Is it catching real things or generating noise? You changed a prompt and now it flags every `count = 0` resource as a misconfiguration — 40% false positive rate, up from 8%. You do not know this yet.
 
 Almost no AI tooling in the wild ships with evals. Sentinel does, and it runs them on every change to its own prompts.
 
 **What ships:**
 - Eval harness: `sentinel eval run` against a fixture suite
 - LLM-as-judge with 5-dimension rubric: precision, recall, actionability, context use, tone
-- 15 curated fixtures covering each skill — realistic scenarios, not toy examples, with documented expected verdicts
+- 15+ curated fixtures covering each skill — realistic scenarios with documented expected verdicts
 - Evals run in CI on every PR to sentinel itself. A prompt change that regresses below threshold fails the check.
-- Prompts are versioned `.md` files — never edited in place, only added. `PROMPT_MANIFEST` tracks which version is active per skill.
+- Prompts are versioned `.md` files. `PROMPT_MANIFEST` tracks which version is active per skill.
 - Eval report published as a GitHub Actions artifact
 
-**Lesson:** How to write evals for AI systems. The LLM-as-judge pattern. Why prompt changes need regression tests. How to measure signal-to-noise ratio. This is the chapter most AI projects skip — the repo exists partly to demonstrate it shouldn't be.
+**What this proves:** AI systems can be measured, not just shipped. The LLM-as-judge pattern works. Prompt changes need regression tests. This is the chapter most AI projects skip.
 
 ---
 
 ### v0.6 — Context from history
 
-**The problem.** A PR touches `eks/node-groups/main.tf`. Four months ago, PR #891 made a structurally similar change. After merge, nodes entered `NotReady` state due to a missing taint toleration on the system pods. The incident lasted 47 minutes. The author of today's PR doesn't know this. Their reviewer joined the team last month.
+**The problem.** A PR touches `eks/node-groups/main.tf`. Four months ago, PR #891 made a structurally similar change. After merge, nodes entered `NotReady` state due to a missing taint toleration. The incident lasted 47 minutes. The author of today's PR doesn't know this. Their reviewer joined the team last month.
 
 Sentinel does.
 
 **What ships:**
 - GitHub API integration: fetches merged PRs, stores diff summaries and reviewer comments, embeds for semantic retrieval
-- Incident linking: GitHub issues labeled `postmortem` or `incident` that reference a PR number are stored and retrievable
+- Incident linking: GitHub issues labeled `postmortem` or `incident` are stored and retrievable
 - RAG retrieval: top-k semantically similar past PRs and incidents injected as context at review time
-- Human feedback loop: when a developer dismisses a finding, it is stored. Consistently dismissed findings are down-weighted in future reviews.
-- `sentinel.yml` cross-repo context: pull standards from a shared `platform-standards` repo, incident history from a dedicated `postmortems` repo
+- Human feedback loop: when a developer dismisses a finding, it is stored. Consistently dismissed findings are down-weighted.
 
-**Lesson:** RAG in a real application. SQLite as a zero-dependency vector store. The difference between retrieval-augmented generation and fine-tuning. How to build AI systems that improve from team feedback without retraining.
-
----
-
-### v0.7 — Full infra team workflow
-
-**The problem.** The team wants to run sentinel on the actual infrastructure monorepo — Terraform for three cloud providers, EKS cluster configs, deployment pipelines, a database migration pipeline. Each area has different risk profiles, different conventions, different reviewers.
-
-**What ships:**
-- `DeploymentRiskSkill`: migration safety (column dropped while app code still references it?), rollout strategy, missing feature flag coverage for risky changes
-- Per-directory skill routing in `sentinel.yml`: different skills and thresholds for `terraform/`, `k8s/`, `.github/workflows/`, `migrations/`
-- `.sentinel/skills/`: team-defined custom skill prompts in the target repo — extend sentinel without forking it
-- Multi-environment Terraform impact: which environments does this change affect? Is there a staging-first deployment gate?
-- Docker image for self-hosted runners
-
-**Lesson:** Composing multiple skills into a coherent, non-redundant review. Designing extension points that teams can use without understanding the internals. The full adoption arc: built in public, configured and deployed privately.
+**What this proves:** RAG in a real application. How to build AI systems that learn from team history without retraining.
 
 ---
 
-### v0.8 — Sentinel fixes what it finds
+### v0.7 — Sentinel fixes what it finds
 
-**The problem.** Sentinel flags that three Kubernetes Deployments use `image: myapp:latest` instead of a pinned digest. A reviewer leaves a comment. The author makes the fix. This is mechanical work that should not require a human round-trip.
+**The problem.** Sentinel flags that three callers still pass a removed Terraform variable. A reviewer leaves a comment. The author makes the fix in each file. This is mechanical work that should not require a human round-trip.
 
 Sentinel can fix it. It creates a branch, applies the change, opens a draft PR. The human reviews and merges. Sentinel does not self-merge.
 
 **What ships:**
 - `AutoFixMode`: for well-defined, low-risk fixes, sentinel creates a branch and opens a draft PR
-- Initial scope: IaC fixes (image pinning, missing labels, missing resource limits, missing lifecycle blocks)
-- Every auto-fix PR body documents: which finding triggered it, what was changed, why the fix is safe, what to verify before merging
+- Every auto-fix PR body documents: which finding triggered it, what was changed, why the fix is safe
 - Fixes are traceable back to the sentinel review that produced them
 
-**Lesson:** The agent pattern — observe, reason, act, hand off. How to make automated code changes auditable. Where to draw the line between automation and human judgment (draft PR, not direct push, not auto-merge).
+**What this proves:** The agent pattern — observe, reason, act, hand off. This is the bridge from review agent to operational agent. The same judgment that found the problem generates the fix.
 
 ---
 
-### v0.9 — Sentinel writes the tests
+### v0.8 — Operational agent preview
 
-**The problem.** A new function `CalculateRetryDelay(attempt int, baseDelay time.Duration) time.Duration` is added with no tests. Sentinel flags the coverage gap. An engineer writes `TestCalculateRetryDelay_basic` that passes one happy path. The function has an integer overflow bug on high attempt values that ships to production.
-
-Sentinel generates the tests. It opens a PR with table-driven tests covering boundary conditions, edge cases, and the specific behaviors the function is documented to provide.
+**The problem.** Sentinel currently reacts to PRs. But drift happens between PRs too: a shared module is updated in one repo, consumers in other repos are now stale. An infrastructure config is manually changed in the console but not reflected in the Terraform state. A deployment config references a secret that was rotated but the deployment manifest was not updated.
 
 **What ships:**
-- `TestGenerationMode`: identifies uncovered functions in the diff, generates tests in the repo's existing test style and framework
-- Tests are opened as a draft PR, not committed to the branch under review
-- Eval harness extended: generated tests are evaluated for coverage of documented behaviors, not just "does it compile"
-- Works across languages — test style is detected from existing test files in the repo
+- Scheduled mode: sentinel runs on a cron, diffs current state against expected state, opens PRs for detected drift
+- Incident correlation: when a GitHub issue is labeled `incident`, sentinel identifies the most likely causal PR and surfaces it
+- Deployment gate: sentinel as a required check before deploy, not just before merge — reviews the full set of changes since last deploy
 
-**Lesson:** Generating code with AI vs reviewing it. How to evaluate AI-generated tests beyond syntax correctness. The feedback loop between sentinel-as-reviewer and sentinel-as-contributor.
+**What this proves:** The review agent framework generalizes to operational use. Same skills, same judgment, different trigger. Git remains the interface — the output is always a PR or a finding, never a direct mutation.
 
 ---
 
@@ -248,12 +339,12 @@ Sentinel generates the tests. It opens a PR with table-driven tests covering bou
 
 **What ships:**
 - `sentinel` Python package on PyPI — usable as a library
-- `Skill`, `EvalHarness`, `ContextAssembler`, `Memory` as stable public APIs
-- `sentinel init` CLI: scaffolds sentinel config in any repo in under a minute
-- A second repository, built on sentinel, demonstrating a different domain (incident triage, or automated runbook generation)
-- Full eval history for sentinel itself: quality metrics from v0.1 through v1.0, visible in the repo
+- `Skill`, `EvalHarness`, `ContextAssembler` as stable public APIs
+- `sentinel init` CLI: scaffolds sentinel config in any repo
+- A second repository built on sentinel demonstrating a different domain
+- Full eval history: quality metrics from v0.1 through v1.0, visible in the repo
 
-The architecture — skill-based analysis, eval harness, prompt versioning, memory — applies to any AI automation task in the SDLC. Sentinel is both the tool and the reference implementation of the pattern.
+The architecture — skill-based analysis, eval harness, prompt versioning, cross-repo context — applies to any AI automation task in the SDLC. Sentinel is both the tool and the reference implementation of the pattern.
 
 ---
 
@@ -261,26 +352,14 @@ The architecture — skill-based analysis, eval harness, prompt versioning, memo
 
 | When | What you do | What changes |
 |---|---|---|
-| Day 1 | Add the GitHub Action, `fail_on: []` | Non-blocking AI comments appear on PRs |
-| Week 2 | Write `CLAUDE.md` with your team's rules | Reviews enforce your conventions, not generic ones |
-| Week 3 | Enable `fail_on: [critical]` | Genuinely dangerous changes are blocked before merge |
+| Day 1 | Add the GitHub Action, `fail_on: []` | Non-blocking AI review comments appear on PRs |
+| Day 1 | Write `CLAUDE.md` with your team's rules | Reviews enforce your conventions, not generic ones |
+| Week 2 | Enable `fail_on: [critical]` | Genuinely dangerous changes blocked before merge |
+| Week 3 | Add `.sentinel/skills/` custom prompts | Domain-specific judgment checks, no fork needed |
 | Month 2 | Run evals, review the report | You know if sentinel is helping or generating noise |
-| Month 2 | Add fixtures from real incidents | Weak spots improve, quality is tracked |
-| Month 3 | Enable memory, seed with past PRs | Sentinel references your actual history |
-| Month 4 | Add `.sentinel/skills/` custom prompts | Domain-specific checks unique to your platform |
-| Month 6 | Enable auto-fix for IaC findings | Mechanical fixes stop requiring human round-trips |
-
----
-
-## Customization surface
-
-Three layers, each independently useful:
-
-**`sentinel.yml`** — structured configuration: which skills run, severity thresholds, which file patterns route to which skills, `fail_on` list, model selection, external context sources.
-
-**`CLAUDE.md`** — freeform English instructions injected into every review as high-priority context. Write it like you are briefing a senior engineer who is new to your team. No DSL to learn. Any team member can update it.
-
-**`.sentinel/skills/`** — custom skill prompt files in the target repo. Define entirely new review behaviors without forking sentinel. Each file is a versioned prompt with structured output instructions.
+| Month 3 | Add cross-repo references in `sentinel.yml` | Changes verified against consumers in other repos |
+| Month 4 | Enable auto-fix for confirmed findings | Mechanical fixes stop requiring human round-trips |
+| Month 6 | Enable scheduled drift detection | Sentinel watches for problems between PRs |
 
 ---
 
@@ -288,4 +367,4 @@ Three layers, each independently useful:
 
 Sentinel reviews its own pull requests from v0.1 onward. The PR history is part of the demo — you can read the git log and see sentinel's reviews improving milestone by milestone. The eval harness runs in CI. Prompt regressions fail the build. The quality metrics are tracked and visible.
 
-The goal is not just to ship a useful tool. It is to show, concretely and step by step, how any engineering team can introduce AI into their development process — measurably, incrementally, without replacing what already works.
+The goal is not just to ship a useful tool. It is to show, concretely and step by step, how any engineering team can introduce AI judgment into their development process — measurably, incrementally, without replacing what already works. And to show how that same judgment extends from reviewing code to managing the systems it runs on.
