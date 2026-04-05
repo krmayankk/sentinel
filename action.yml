@@ -24,6 +24,12 @@ inputs:
     description: Claude model to use
     required: false
     default: claude-sonnet-4-6
+  timeout:
+    description: >
+      Maximum seconds sentinel will wait for a model response before failing.
+      Useful for keeping CI fast on large diffs.
+    required: false
+    default: "30"
 
 runs:
   using: composite
