@@ -16,7 +16,14 @@ jobs:
         with:
           fetch-depth: 0     # full history needed for git diff
 
-      - uses: ./
+      # Always run sentinel from main so a broken PR branch cannot
+      # crash the reviewer before it posts findings.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: .sentinel-action
+
+      - uses: ./.sentinel-action
         with:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           fail-on: "high,critical"
