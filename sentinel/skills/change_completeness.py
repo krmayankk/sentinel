@@ -113,9 +113,9 @@ class ChangeCompletenessSkill(Skill):
 
     def _build_prompt(self, diff: str, context: Context) -> str:
         custom_rules_section = ""
-        if context.claude_md.strip():
+        if context.instructions.strip():
             custom_rules_section = _CUSTOM_RULES_SECTION.format(
-                rules=context.claude_md.strip()
+                rules=context.instructions.strip()
             )
         return _PROMPT.format(diff=diff, custom_rules_section=custom_rules_section)
 

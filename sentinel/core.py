@@ -28,7 +28,7 @@ class Finding:
 class Context:
     repo: str        # "owner/repo"
     pr_number: int
-    claude_md: str = ""                         # contents of CLAUDE.md if present
+    instructions: str = ""                      # reviewer instructions for this repo (e.g. from CLAUDE.md)
     config: dict = field(default_factory=dict)  # sentinel.yml contents
     repo_path: str = ""                         # local path to repo root; enables codebase search
 

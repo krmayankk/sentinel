@@ -21,13 +21,13 @@ module "rds" {
 Python, JavaScript, Ruby, and similar languages have no compile step. A renamed dataclass field, a removed function argument, a changed return type — these only surface at runtime. By then they are in production.
 
 ```
-# PR renames this field in core.py:
-- claude_md: str = ""
-+ instructions: str = ""
+# PR renames this field in models.py:
+- db_url: str = ""
++ database_url: str = ""
 
 # These callers are not in the diff. They will raise AttributeError at runtime:
-context = Context(claude_md=load_claude_md())   # TypeError on construction
-context.claude_md                               # AttributeError on access
+config = AppConfig(db_url=load_config())   # TypeError on construction
+config.db_url                              # AttributeError on access
 ```
 
 ### Schema and contract changes
