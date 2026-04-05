@@ -44,10 +44,10 @@ def _run_local(args: argparse.Namespace, model: str, fail_on: set[str]) -> None:
     with open(args.diff) as f:
         raw_diff = f.read()
 
-    claude_md = ""
-    if args.claude_md:
-        with open(args.claude_md) as f:
-            claude_md = f.read()
+    instructions = ""
+    if args.instructions:
+        with open(args.instructions) as f:
+            instructions = f.read()
 
     diff = truncate_diff(filter_noise(raw_diff))
     if not diff.strip():
@@ -57,7 +57,7 @@ def _run_local(args: argparse.Namespace, model: str, fail_on: set[str]) -> None:
     context = Context(
         repo="local",
         pr_number=0,
-        claude_md=claude_md,
+        instructions=instructions,
         repo_path=args.repo_path or "",
     )
 
@@ -88,7 +88,7 @@ def _run_gha(model: str, fail_on: set[str]) -> None:
     context = Context(
         repo=repo,
         pr_number=pr_number,
-        claude_md=_load_claude_md(),
+        instructions=_load_instructions(),
         repo_path=repo_path,
     )
 
@@ -164,7 +164,7 @@ def _git_diff() -> str:
     return result.stdout
 
 
-def _load_claude_md() -> str:
+def _load_instructions() -> str:
     try:
         with open("CLAUDE.md") as f:
             return f.read()

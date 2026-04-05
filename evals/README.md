@@ -9,7 +9,7 @@ The eval harness (v0.5) will run these automatically in CI. Adding fixtures here
 ```
 evals/fixtures/<scenario-name>/
     diff.patch      — the git diff sentinel will review
-    context.json    — repo, pr_number, claude_md, and a description of the scenario
+    context.json    — repo, pr_number, instructions, and a description of the scenario
     expected.json   — what sentinel must find, must not find, and the expected verdict
 ```
 
