@@ -39,6 +39,20 @@ def post_findings(
     response.raise_for_status()
 
 
+def _format_caller_line(raw: str) -> str:
+    """Format a single grep result line as a Markdown list item.
+
+    Input:  "- ./terraform/envs/prod/main.tf:12:  enable_performance_insights = true"
+    Output: "- `terraform/envs/prod/main.tf:12` — `enable_performance_insights = true`"
+    """
+    entry = raw.lstrip("- ").lstrip("./")
+    parts = entry.split(":")
+    if len(parts) >= 3:
+        path, lineno, content = parts[0], parts[1], ":".join(parts[2:]).strip()
+        return f"- `{path}:{lineno}` — `{content}`"
+    return f"- `{entry}`"
+
+
 def _format_comment(findings: list[Finding]) -> str:
     blocks: list[str] = ["## Sentinel Review\n"]
 
@@ -64,7 +78,7 @@ def _format_comment(findings: list[Finding]) -> str:
                 if line.strip().startswith("-")
             ]
             count = len(caller_lines)
-            caller_md = "\n".join(f"- `{l.lstrip('- ').split(':')[0]}:{l.lstrip('- ').split(':')[1] if ':' in l else ''}` — `{':'.join(l.lstrip('- ').split(':')[2:]).strip()}`" for l in caller_lines)
+            caller_md = "\n".join(_format_caller_line(l) for l in caller_lines)
             blocks.append(
                 f"<details>\n"
                 f"<summary>{count} confirmed caller(s) that will break</summary>\n\n"

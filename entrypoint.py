@@ -45,8 +45,8 @@ def _run_local(args: argparse.Namespace, model: str, fail_on: set[str]) -> None:
         raw_diff = f.read()
 
     instructions = ""
-    if args.instructions:
-        with open(args.instructions) as f:
+    if args.claude_md:
+        with open(args.claude_md) as f:
             instructions = f.read()
 
     diff = truncate_diff(filter_noise(raw_diff))
@@ -165,6 +165,12 @@ def _git_diff() -> str:
 
 
 def _load_instructions() -> str:
+    """Load reviewer instructions from CLAUDE.md if present.
+
+    Teams write repo-specific guidance in CLAUDE.md. Sentinel injects
+    this as high-priority context so the reviewer enforces your conventions,
+    not just generic patterns.
+    """
     try:
         with open("CLAUDE.md") as f:
             return f.read()
