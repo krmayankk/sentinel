@@ -1,0 +1,50 @@
+name: Sentinel
+description: >
+  AI agents for your software delivery pipeline. Catches what linters miss:
+  incomplete changes, IaC blast radius, workflow privilege escalation, and
+  team convention violations. Bring your own Anthropic API key.
+author: krmayankk
+
+branding:
+  icon: shield
+  color: gray-dark
+
+inputs:
+  anthropic-api-key:
+    description: Anthropic API key (store as a repository secret)
+    required: true
+  fail-on:
+    description: >
+      Comma-separated severity levels that fail the check and block merge.
+      Leave empty to run in warning-only mode.
+      Example: "critical" or "critical,high"
+    required: false
+    default: ""
+  model:
+    description: Claude model to use
+    required: false
+    default: claude-sonnet-4-6
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install sentinel
+      shell: bash
+      run: pip install -e "${{ github.action_path }}" --quiet
+
+    - name: Run sentinel
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        GITHUB_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        SENTINEL_BASE_REF: origin/${{ github.event.pull_request.base.ref }}
+        SENTINEL_FAIL_ON: ${{ inputs.fail-on }}
+        SENTINEL_MODEL: ${{ inputs.model }}
+      run: python "${{ github.action_path }}/entrypoint.py"

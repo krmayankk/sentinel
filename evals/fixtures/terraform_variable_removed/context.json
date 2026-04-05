@@ -1,0 +1,7 @@
+{
+  "description": "Terraform variable removed from a shared module. Three environment callers still pass the removed variable. Next terraform apply will fail with 'An argument named enable_performance_insights is not expected here'.",
+  "repo": "example-org/infra",
+  "pr_number": 42,
+  "claude_md": "",
+  "note": "The callers (envs/prod, envs/staging, envs/dev) are NOT in this diff — they still reference the removed variable. Sentinel must reason that callers likely exist and flag the gap."
+}

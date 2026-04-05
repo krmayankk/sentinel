@@ -1,0 +1,12 @@
+{
+  "must_find": [
+    {
+      "skill": "change_completeness",
+      "severity_min": "high",
+      "title_contains": ["caller", "consumer", "module", "variable", "enable_performance_insights"],
+      "rationale": "Removing a Terraform module variable without updating callers causes terraform apply to fail. Sentinel must flag that callers likely still pass this argument."
+    }
+  ],
+  "must_not_find": [],
+  "verdict": "incomplete"
+}
