@@ -4,11 +4,11 @@ import requests
 
 from sentinel.core import Finding, Severity
 
-_SEVERITY_LABEL = {
-    Severity.CRITICAL: "CRITICAL",
-    Severity.HIGH: "HIGH",
-    Severity.MEDIUM: "MEDIUM",
-    Severity.LOW: "LOW",
+_SEVERITY_ICON = {
+    Severity.CRITICAL: "🔴",
+    Severity.HIGH:     "🟠",
+    Severity.MEDIUM:   "🟡",
+    Severity.LOW:      "🔵",
 }
 
 _GITHUB_API = "https://api.github.com"
@@ -40,24 +40,46 @@ def post_findings(
 
 
 def _format_comment(findings: list[Finding]) -> str:
-    lines = ["**Sentinel**\n"]
+    blocks: list[str] = ["## Sentinel Review\n"]
 
     for f in findings:
-        label = _SEVERITY_LABEL[f.severity]
-        location = f" — `{f.file}:{f.line}`" if f.file and f.line else (f" — `{f.file}`" if f.file else "")
-        lines.append(f"**[{label}] {f.title}**{location}")
-        lines.append(f.message)
-        lines.append(f"_Suggestion: {f.suggestion}_")
-        lines.append("")
+        icon = _SEVERITY_ICON[f.severity]
+        label = f.severity.value.upper()
+        location = f"`{f.file}:{f.line}`" if f.file and f.line else f"`{f.file}`" if f.file else ""
 
-    critical = sum(1 for f in findings if f.severity == Severity.CRITICAL)
-    high = sum(1 for f in findings if f.severity == Severity.HIGH)
-    if critical or high:
-        blocking = []
-        if critical:
-            blocking.append(f"{critical} critical")
-        if high:
-            blocking.append(f"{high} high")
-        lines.append(f"**{' and '.join(blocking)} severity** — review before merging.")
+        # Header line
+        header = f"### {icon} [{label}] {f.title}"
+        if location:
+            header += f" &nbsp;·&nbsp; {location}"
+        blocks.append(header)
 
-    return "\n".join(lines)
+        # Split message into narrative and confirmed callers section
+        narrative, _, callers_section = f.message.partition("\n\nConfirmed:")
+        blocks.append(narrative.strip())
+
+        # Render confirmed callers as a collapsible list
+        if callers_section.strip():
+            caller_lines = [
+                line.strip() for line in callers_section.splitlines()
+                if line.strip().startswith("-")
+            ]
+            count = len(caller_lines)
+            caller_md = "\n".join(f"- `{l.lstrip('- ').split(':')[0]}:{l.lstrip('- ').split(':')[1] if ':' in l else ''}` — `{':'.join(l.lstrip('- ').split(':')[2:]).strip()}`" for l in caller_lines)
+            blocks.append(
+                f"<details>\n"
+                f"<summary>{count} confirmed caller(s) that will break</summary>\n\n"
+                f"{caller_md}\n"
+                f"</details>"
+            )
+
+        blocks.append(f"> **Suggestion:** {f.suggestion}")
+        blocks.append("")
+
+    # Footer summary
+    counts = {s: sum(1 for f in findings if f.severity == s) for s in Severity}
+    parts = [f"{v} {k.value}" for k, v in counts.items() if v]
+    total = len(findings)
+    blocks.append("---")
+    blocks.append(f"**{total} finding(s)** &nbsp;·&nbsp; {' &nbsp;·&nbsp; '.join(parts)}")
+
+    return "\n".join(blocks)
