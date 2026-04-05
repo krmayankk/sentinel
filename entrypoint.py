@@ -25,14 +25,12 @@ from sentinel.skills.change_completeness import ChangeCompletenessSkill
 
 def main() -> None:
     args = _parse_args()
-
-    if args.env:
-        _load_env_file(args.env)
-
     model = os.environ.get("SENTINEL_MODEL", "claude-sonnet-4-6")
     fail_on = {s.strip() for s in os.environ.get("SENTINEL_FAIL_ON", "").split(",") if s.strip()}
 
-    if args.diff:
+    if args.command == "review":
+        if args.env:
+            _load_env_file(args.env)
         _run_local(args, model, fail_on)
     else:
         _run_gha(model, fail_on)

@@ -198,14 +198,21 @@ class ChangeCompletenessSkill(Skill):
         return verified
 
 
+_EXCLUDE_DIRS = [
+    ".git", ".venv", "venv", "node_modules", "dist", "build",
+    "__pycache__", ".mypy_cache", ".ruff_cache", ".pytest_cache",
+]
+
 def _grep(term: str, repo_path: str, exclude_files: set[str] | None = None) -> list[str]:
     """Return file:line matches for term within repo_path.
 
-    Files that are part of the diff itself are excluded — they are the source
-    of the change, not callers that need to be updated.
+    Vendor directories, virtual environments, and build artifacts are excluded
+    — they add noise without signal. Files changed in the diff are also excluded
+    since they are the source of the change, not dependents that need updating.
     """
+    exclude_args = [arg for d in _EXCLUDE_DIRS for arg in (f"--exclude-dir={d}",)]
     result = subprocess.run(
-        ["grep", "-rn", "--exclude-dir=.git", term, "."],
+        ["grep", "-rn", *exclude_args, term, "."],
         cwd=repo_path,
         capture_output=True,
         text=True,
