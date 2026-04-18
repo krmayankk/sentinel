@@ -60,10 +60,14 @@ Skill Execution (parallel, per sentinel.yml routing)
   |-- [.sentinel/skills/*.md]      <- v0.2+: team-defined, no fork needed
     |
     v
-Verification (LLM+grep two-step)
-  |-- For each finding: grep the repo (and external repos) for the search term
+Verification
+  |-- Current: grep the repo for the search term (fast, deterministic, free)
+  |-- Future: LLM reads relevant files and reasons about them (agentic loop)
   |-- Callers found -> finding confirmed, severity elevated, exact locations reported
   |-- No callers found -> finding dismissed (no speculation)
+  |-- Note: grep cannot reason about absence ("key missing from file B").
+  |--   As context windows grow and costs drop, LLM-based verification
+  |--   replaces grep — same Skill ABC, different verification backend.
     |
     v
 Output -> GitHub
