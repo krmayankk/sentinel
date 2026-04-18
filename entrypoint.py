@@ -17,10 +17,11 @@ import os
 import subprocess
 import sys
 
-from sentinel.core import Context, Severity
+from sentinel.config import load_config
+from sentinel.core import Context, Finding, Severity
 from sentinel.github import post_findings
 from sentinel.preprocess import filter_noise, truncate_diff
-from sentinel.skills.change_completeness import ChangeCompletenessSkill
+from sentinel.runner import run_skills
 
 
 def main() -> None:
@@ -54,18 +55,22 @@ def _run_local(args: argparse.Namespace, model: str, fail_on: set[str]) -> None:
         print("sentinel: nothing to review after filtering noise.")
         sys.exit(0)
 
+    repo_path = args.repo_path or ""
+    config = load_config(repo_path)
+
     context = Context(
         repo="local",
         pr_number=0,
         instructions=instructions,
-        repo_path=args.repo_path or "",
+        repo_path=repo_path,
     )
 
-    findings = ChangeCompletenessSkill(model=model).run(diff, context)
-    _print_findings(findings, source=args.diff)
+    results = run_skills(diff, context, config, model=model)
+    all_findings = _flatten(results)
+    _print_findings(results, source=args.diff)
 
     if fail_on:
-        blocking = [f for f in findings if f.severity.value in fail_on]
+        blocking = [f for f in all_findings if f.severity.value in fail_on]
         if blocking:
             print(f"\nsentinel: {len(blocking)} finding(s) at blocking severity.")
             sys.exit(1)
@@ -79,6 +84,7 @@ def _run_gha(model: str, fail_on: set[str]) -> None:
 
     # GITHUB_WORKSPACE is always set in GHA — it's the checked-out repo root.
     repo_path = os.environ.get("GITHUB_WORKSPACE", "")
+    config = load_config(repo_path)
 
     diff = truncate_diff(filter_noise(_git_diff()))
     if not diff.strip():
@@ -92,14 +98,15 @@ def _run_gha(model: str, fail_on: set[str]) -> None:
         repo_path=repo_path,
     )
 
-    findings = ChangeCompletenessSkill(model=model).run(diff, context)
+    results = run_skills(diff, context, config, model=model)
+    all_findings = _flatten(results)
 
-    _print_findings(findings, source=f"{repo}#{pr_number}")
-    _emit_gha_annotations(findings)
-    post_findings(repo, pr_number, findings, github_token)
+    _print_findings(results, source=f"{repo}#{pr_number}")
+    _emit_gha_annotations(all_findings)
+    post_findings(repo, pr_number, all_findings, github_token)
 
     if fail_on:
-        blocking = [f for f in findings if f.severity.value in fail_on]
+        blocking = [f for f in all_findings if f.severity.value in fail_on]
         if blocking:
             print(f"\nsentinel: {len(blocking)} finding(s) at blocking severity. Failing.")
             sys.exit(1)
@@ -114,7 +121,7 @@ def _emit_gha_annotations(findings: list) -> None:
         file_part = f",file={f.file},line={f.line}" if f.file and f.line else ""
         # Newlines in the message break the annotation format — collapse them.
         message = f.message.replace("\n", " ")
-        print(f"::{level}{file_part}::{f.title} — {message}")
+        print(f"::{level}{file_part}::[{f.skill}] {f.title} — {message}")
 
 
 # -- output --
@@ -130,27 +137,39 @@ _DIM   = "\033[2m"
 _BOLD  = "\033[1m"
 
 
-def _print_findings(findings: list, source: str) -> None:
-    print(f"\n{_BOLD}sentinel{_RESET} — change completeness — {_DIM}{source}{_RESET}\n")
+def _flatten(results: dict[str, list]) -> list[Finding]:
+    """Flatten per-skill results into a single findings list."""
+    return [f for findings in results.values() for f in findings]
 
-    if not findings:
-        print("  No completeness gaps found.\n")
+
+def _print_findings(results: dict[str, list], source: str) -> None:
+    print(f"\n{_BOLD}sentinel{_RESET} — {_DIM}{source}{_RESET}\n")
+
+    all_findings = _flatten(results)
+
+    for skill_name, findings in results.items():
+        if not findings:
+            print(f"  {_DIM}[{skill_name}] PASS — no findings{_RESET}")
+            continue
+
+        print(f"  {_BOLD}[{skill_name}]{_RESET}")
+        for f in findings:
+            color = _SEV_COLOR.get(f.severity, "")
+            loc = f"  {_DIM}{f.file}:{f.line}{_RESET}" if f.file else ""
+            print(f"  {color}{_BOLD}[{f.severity.value.upper()}] {f.title}{_RESET}{loc}")
+            for line in f.message.splitlines():
+                print(f"    {line}")
+            print(f"    {_DIM}Suggestion: {f.suggestion}{_RESET}")
+            print()
+
+    if not all_findings:
+        print(f"\n  No findings across {len(results)} skill(s).\n")
         return
 
-    for f in findings:
-        color = _SEV_COLOR.get(f.severity, "")
-        loc = f"  {_DIM}{f.file}:{f.line}{_RESET}" if f.file else ""
-        print(f"{color}{_BOLD}[{f.severity.value.upper()}] {f.title}{_RESET}{loc}")
-        # Indent multi-line messages for readability
-        for line in f.message.splitlines():
-            print(f"  {line}")
-        print(f"  {_DIM}Suggestion: {f.suggestion}{_RESET}")
-        print()
-
-    counts = {s: sum(1 for f in findings if f.severity == s) for s in Severity}
+    counts = {s: sum(1 for f in all_findings if f.severity == s) for s in Severity}
     summary = ", ".join(f"{v} {k.value}" for k, v in counts.items() if v)
     print(f"{'─' * 48}")
-    print(f"{len(findings)} finding(s): {summary}\n")
+    print(f"{len(all_findings)} finding(s) across {len(results)} skill(s): {summary}\n")
 
 
 # -- helpers --
