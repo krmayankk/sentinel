@@ -90,7 +90,46 @@ Start with zero friction. Move findings to blocking as you validate they are rea
 
 ## Customization surface
 
-Three layers. Each solves a different problem. Each works independently.
+Four layers. Each solves a different problem. Each works independently. The org layer cannot be bypassed — everything else is repo-controlled.
+
+### Layer 0: Org config (`my-org/.sentinel`) — governance that repos cannot bypass
+
+A central config repo owned by the security or platform team. Defines mandatory skills, mandatory rules, and minimum severity thresholds that apply to every repo in the org. Individual repos cannot remove, weaken, or override these — they can only add to them or make them stricter.
+
+```yaml
+# my-org/.sentinel/org-sentinel.yml
+
+mandatory_skills:
+  - workflow_security:
+      fail_on: [critical]           # repo cannot relax this
+  - change_completeness:
+      fail_on: [high, critical]     # repo can escalate to [medium, high, critical] but not to []
+
+mandatory_rules: |
+  - All services must have a health check endpoint
+  - All Terraform must use the shared S3 backend module
+  - No service may store PII without encryption at rest
+  - All IAM roles must have a permission boundary
+```
+
+```markdown
+# my-org/.sentinel/skills/compliance_check.md
+Check that new data stores (S3, RDS, DynamoDB, Redis) have encryption
+at rest enabled and that access logging is configured. Unencrypted data
+stores in any environment are critical. This is a compliance requirement
+that cannot be waived at the repo level.
+```
+
+**Who uses it:** Security team, platform team, compliance. This is the policy floor for the entire org.
+
+**What it controls:** The minimum set of judgment checks and blocking thresholds. The Kubernetes admission controller equivalent for code review — org sets the floor, teams build on top.
+
+**How it merges with repo config:**
+1. Org mandatory skills are always included — repo `sentinel.yml` cannot remove them
+2. Org mandatory rules are prepended to the repo's `CLAUDE.md` context — always present
+3. Org custom skills run alongside repo custom skills — both produce findings
+4. `fail_on` uses the strictest value: if org says `[critical]` and repo says `[critical, high]`, the result is `[critical, high]` (repo made it stricter, which is allowed)
+5. If repo tries to set `fail_on: []` for a mandatory skill, org `fail_on` wins
 
 ### Layer 1: `CLAUDE.md` — teach existing skills your conventions
 
@@ -169,11 +208,12 @@ critical — they break all existing clients silently.
 
 | Layer | What it controls | Who writes it | Example |
 |---|---|---|---|
+| Org config (`my-org/.sentinel`) | Mandatory skills and policy floor | Security / platform team | "All repos must run workflow_security at fail_on: [critical]" |
 | `CLAUDE.md` | What existing skills look for | Any engineer | "Lambda functions need a DLQ" |
-| `sentinel.yml` | Which skills run, what blocks merge | Platform team | Route IaC skills to `terraform/**` only |
+| `sentinel.yml` | Which skills run, what blocks merge | Tech lead | Route IaC skills to `terraform/**` only |
 | `.sentinel/skills/` | New judgment checks | Architects | Cost attribution, API versioning |
 
-A team starts with just `CLAUDE.md` on day one. Adds `sentinel.yml` when they want routing and blocking. Adds `.sentinel/skills/` when they need judgment checks no built-in skill covers. Each layer is a separate commit, a separate decision.
+A team starts with just `CLAUDE.md` on day one. Adds `sentinel.yml` when they want routing and blocking. Adds `.sentinel/skills/` when they need judgment checks no built-in skill covers. The org layer is set once by the platform team — repos inherit it automatically. Each layer is a separate commit, a separate decision. Repos can only make things stricter, never weaker than what the org mandates.
 
 ---
 
