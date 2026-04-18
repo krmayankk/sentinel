@@ -215,6 +215,34 @@ critical — they break all existing clients silently.
 
 A team starts with just `CLAUDE.md` on day one. Adds `sentinel.yml` when they want routing and blocking. Adds `.sentinel/skills/` when they need judgment checks no built-in skill covers. The org layer is set once by the platform team — repos inherit it automatically. Each layer is a separate commit, a separate decision. Repos can only make things stricter, never weaker than what the org mandates.
 
+### Where things come from at review time
+
+Skills, config, and conventions each have multiple sources. The runner merges them with clear precedence.
+
+**Skills** — three sources, all run:
+
+| Source | Location | Who controls | Can repo remove? |
+|---|---|---|---|
+| Built-in | `sentinel/skills/*.py` (sentinel package) | Sentinel maintainers | Can choose not to enable via `sentinel.yml`, but can't delete |
+| Org mandatory | `my-org/.sentinel/skills/*.md` (org config repo) | Security / platform team | No — always runs |
+| Repo custom | `.sentinel/skills/*.md` (target repo) | Repo team | Yes |
+
+**Config** — two sources, org is the floor:
+
+| Source | Location | Precedence |
+|---|---|---|
+| Org config | `my-org/.sentinel/org-sentinel.yml` | Sets mandatory skills and minimum `fail_on` — cannot be weakened |
+| Repo config | `sentinel.yml` (target repo) | Additive: can enable more skills, make `fail_on` stricter, add routing |
+
+**Conventions** — two sources, concatenated:
+
+| Source | Location | Scope |
+|---|---|---|
+| Org mandatory rules | `mandatory_rules` in org config | Prepended to every repo's prompt context |
+| Repo CLAUDE.md | `CLAUDE.md` (target repo) | This repo only, appended after org rules |
+
+The runner resolves all three dimensions before executing: built-in + org + repo skills, org floor + repo config, org rules + repo CLAUDE.md. A single review may run five skills from three different sources — the output groups findings by skill so the team can see exactly which judgment check flagged what.
+
 ---
 
 ## Milestones

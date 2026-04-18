@@ -1,0 +1,43 @@
+name: Tests
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  push:
+    branches: [main]
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]" || pip install -e .
+      - run: pip install pytest pyyaml
+
+      - name: Run unit tests (no LLM)
+        run: python -m pytest tests/ -v --ignore=tests/test_integration.py
+
+  integration:
+    name: Integration tests (LLM)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]" || pip install -e .
+      - run: pip install pytest pyyaml
+
+      - name: Run integration tests (real LLM calls)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python -m pytest tests/test_integration.py -v
