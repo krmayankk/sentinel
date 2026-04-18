@@ -202,7 +202,7 @@ critical — they break all existing clients silently.
 
 **Who uses it:** Senior engineers, architects. Define domain-specific judgment that is unique to your system — not generic enough for a built-in skill, too important to leave to memory.
 
-**What it controls:** What sentinel checks for. New skills, not new rules for existing skills (that's CLAUDE.md). Each file is a self-contained judgment check that the framework loads, runs, and reports independently.
+**What it controls:** What sentinel checks for. New skills, not new rules for existing skills (that's CLAUDE.md). Each file is a self-contained judgment check that the framework loads, runs, and reports independently. Custom skills use the same execution pipeline as built-in skills (prompt → LLM → parse findings → grep verify) — the only difference is where the prompt lives.
 
 ### How the layers compose
 
