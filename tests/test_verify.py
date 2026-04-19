@@ -101,3 +101,55 @@ def test_verify_passes_through_no_search_term():
         verified = _verify([finding], "test", d)
         assert len(verified) == 1
         assert verified[0].severity == Severity.LOW  # unchanged
+
+
+def test_verify_with_extra_search_paths():
+    """Cross-repo search: finding confirmed via extra search paths."""
+    with tempfile.TemporaryDirectory() as main_repo:
+        with tempfile.TemporaryDirectory() as extra_repo:
+            # Main repo has no matches
+            with open(os.path.join(main_repo, "main.tf"), "w") as f:
+                f.write('instance_class = "db.t3.medium"\n')
+            # Extra repo has the caller
+            with open(os.path.join(extra_repo, "consumer.tf"), "w") as f:
+                f.write('enable_perf = true\n')
+
+            finding = Finding(
+                skill="test",
+                severity=Severity.MEDIUM,
+                title="Cross-repo caller",
+                message="Variable removed but callers in other repos not updated",
+                suggestion="Update callers",
+                search_for="enable_perf",
+            )
+            verified = _verify(
+                [finding], "test", main_repo,
+                extra_search_paths=[extra_repo],
+            )
+            assert len(verified) == 1
+            assert "Confirmed" in verified[0].message
+            assert verified[0].severity == Severity.HIGH  # elevated
+
+
+def test_verify_dismissed_even_with_extra_paths():
+    """If neither main nor extra repos have callers, finding is dismissed."""
+    with tempfile.TemporaryDirectory() as main_repo:
+        with tempfile.TemporaryDirectory() as extra_repo:
+            with open(os.path.join(main_repo, "clean.tf"), "w") as f:
+                f.write('instance_class = "db.t3.medium"\n')
+            with open(os.path.join(extra_repo, "also_clean.tf"), "w") as f:
+                f.write('instance_class = "db.t3.large"\n')
+
+            finding = Finding(
+                skill="test",
+                severity=Severity.MEDIUM,
+                title="Suspected cross-repo issue",
+                message="Might have callers somewhere",
+                suggestion="Check callers",
+                search_for="enable_perf",
+            )
+            verified = _verify(
+                [finding], "test", main_repo,
+                extra_search_paths=[extra_repo],
+            )
+            assert len(verified) == 0  # dismissed

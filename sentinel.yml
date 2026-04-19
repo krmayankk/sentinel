@@ -1,4 +1,9 @@
 skills:
   - change_completeness
+  - workflow_security
 
 fail_on: []
+
+routing:
+  - pattern: ".github/workflows/**"
+    skills: [workflow_security]

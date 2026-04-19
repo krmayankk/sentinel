@@ -56,7 +56,10 @@ class LLMSkill(Skill):
         findings = self._parse(raw)
 
         if context.repo_path:
-            findings = _verify(findings, self.name, context.repo_path, diff=diff)
+            findings = _verify(
+                findings, self.name, context.repo_path,
+                diff=diff, extra_search_paths=context.extra_search_paths,
+            )
 
         return findings
 
@@ -105,7 +108,8 @@ class LLMSkill(Skill):
 
 
 def _verify(
-    findings: list[Finding], skill_name: str, repo_path: str, diff: str = ""
+    findings: list[Finding], skill_name: str, repo_path: str,
+    diff: str = "", extra_search_paths: list[str] | None = None,
 ) -> list[Finding]:
     """For each finding with a search term, grep the repo to confirm or dismiss."""
     changed_files = _changed_files(diff)
@@ -117,6 +121,12 @@ def _verify(
             continue
 
         matches = _grep(f.search_for, repo_path, exclude_files=changed_files)
+
+        # Search extra repos (cross-repo verification)
+        for extra_path in (extra_search_paths or []):
+            extra_matches = _grep(f.search_for, extra_path)
+            matches.extend(extra_matches)
+
         if not matches:
             continue  # no callers found — dismiss
 

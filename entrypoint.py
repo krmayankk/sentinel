@@ -28,18 +28,20 @@ def main() -> None:
     args = _parse_args()
     model = os.environ.get("SENTINEL_MODEL", "claude-sonnet-4-6")
     fail_on = {s.strip() for s in os.environ.get("SENTINEL_FAIL_ON", "").split(",") if s.strip()}
+    event_type = os.environ.get("SENTINEL_EVENT_TYPE", "")
 
     if args.command == "review":
         if args.env:
             _load_env_file(args.env)
-        _run_local(args, model, fail_on)
+        event_type = getattr(args, "event_type", "") or event_type
+        _run_local(args, model, fail_on, event_type)
     else:
-        _run_gha(model, fail_on)
+        _run_gha(model, fail_on, event_type)
 
 
 # -- modes --
 
-def _run_local(args: argparse.Namespace, model: str, fail_on: set[str]) -> None:
+def _run_local(args: argparse.Namespace, model: str, fail_on: set[str], event_type: str = "") -> None:
     _require_env("ANTHROPIC_API_KEY")
 
     with open(args.diff) as f:
@@ -65,7 +67,7 @@ def _run_local(args: argparse.Namespace, model: str, fail_on: set[str]) -> None:
         repo_path=repo_path,
     )
 
-    results = run_skills(diff, context, config, model=model)
+    results = run_skills(diff, context, config, model=model, event_type=event_type)
     all_findings = _flatten(results)
     _print_findings(results, source=args.diff)
 
@@ -76,7 +78,7 @@ def _run_local(args: argparse.Namespace, model: str, fail_on: set[str]) -> None:
             sys.exit(1)
 
 
-def _run_gha(model: str, fail_on: set[str]) -> None:
+def _run_gha(model: str, fail_on: set[str], event_type: str = "") -> None:
     github_token = _require_env("GITHUB_TOKEN")
     repo = _require_env("GITHUB_REPOSITORY")
     pr_number = int(_require_env("PR_NUMBER"))
@@ -98,7 +100,7 @@ def _run_gha(model: str, fail_on: set[str]) -> None:
         repo_path=repo_path,
     )
 
-    results = run_skills(diff, context, config, model=model)
+    results = run_skills(diff, context, config, model=model, event_type=event_type)
     all_findings = _flatten(results)
 
     _print_findings(results, source=f"{repo}#{pr_number}")
@@ -225,6 +227,7 @@ def _parse_args() -> argparse.Namespace:
     review.add_argument("--repo-path", metavar="PATH", help="Repo root to search for callers (local mode)")
     review.add_argument("--env",       metavar="PATH", help="Path to a .env file")
     review.add_argument("--claude-md", metavar="PATH", help="Path to a CLAUDE.md file")
+    review.add_argument("--event-type", metavar="TYPE", default="", help="Event type: push, merge, or empty (run all)")
     return parser.parse_args()
 
 
