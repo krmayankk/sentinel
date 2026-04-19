@@ -10,8 +10,8 @@ The first agents are **reviewers**: passive, read-only, they analyze diffs and p
 
 | Phase | What sentinel does | Trust level |
 |---|---|---|
-| Review (v0.1–v0.5) | Reads diffs, reasons about them, produces findings | Read-only. Human decides. |
-| Fix (v0.8) | Creates a branch and opens a draft PR for confirmed findings | Human reviews and merges. Sentinel does not self-merge. |
+| Review (v0.1–v0.4) | Reads diffs, reasons about them, produces findings | Read-only. Human decides. |
+| Fix (v0.6) | Creates a branch and opens a draft PR for confirmed findings | Human reviews and merges. Sentinel does not self-merge. |
 | Operate (v1.0+) | Watches for drift, correlates incidents, enforces gates | Human sets policy. Sentinel acts within it. Git is always the interface. |
 
 Each phase builds on the one before it. You cannot fix what you cannot judge. You cannot operate what you cannot fix. The milestones below build the judgment layer first, then the action layer.
@@ -55,9 +55,10 @@ Context Assembly
     v
 Skill Execution (parallel, per sentinel.yml routing)
   |-- ChangeCompletenessSkill      <- v0.1: did you update all the dependents?
-  |-- ContractDriftSkill           <- v0.3: cross-boundary interface contracts
-  |-- WorkflowSecuritySkill        <- v0.4: GHA privilege escalation paths
+  |-- WorkflowSecuritySkill        <- v0.3: GHA privilege escalation paths
+  |-- MigrationSafetySkill         <- v0.3: unsafe schema migrations
   |-- [.sentinel/skills/*.md]      <- v0.2+: team-defined, no fork needed
+  |-- Any skill can opt into cross-repo search (expensive, off by default)
     |
     v
 Verification
@@ -163,26 +164,33 @@ Structured configuration for the runner: which skills, which file patterns, whic
 fail_on: [critical, high]
 
 skills:
-  - change_completeness
-  - contract_drift
+  - change_completeness:
+      cross_repo:                          # opt-in: expensive, off by default
+        - repo: my-org/shared-modules
+        - repo: my-org/consumer-service
+  - workflow_security
+  - migration_safety
   - cost_attribution    # custom skill from .sentinel/skills/
 
 routing:
   - pattern: "terraform/**"
-    skills: [change_completeness, contract_drift]
+    skills: [change_completeness]
     fail_on: [critical, high, medium]   # stricter for IaC
   - pattern: ".github/workflows/**"
     skills: [workflow_security]
+  - pattern: "migrations/**"
+    skills: [migration_safety]
 
-context:
-  external_repos:
-    - repo: my-org/shared-modules
-      path: modules/
+mode:
+  on_push: [workflow_security, change_completeness]   # cheap, every push
+  on_merge: [migration_safety]                        # expensive, final gate only
 ```
 
 **Who uses it:** Platform team, tech leads. Controls the operational behavior — what runs, what blocks, what searches where.
 
 **What it controls:** The runner. Not what skills look for (that's CLAUDE.md), but which skills run on which files and what happens when they find something.
+
+**Cross-repo search is a skill property, not a separate skill.** Any skill can opt into cross-repo verification via `cross_repo` in its config. When enabled, the runner checks out the specified repos and includes them in the grep verification scope. This is expensive (clone time, API tokens) so it's off by default and explicitly enabled per-skill by the repo owner. Long-term, the LLM can deduce which repos to check from imports and dependencies — no manual config needed.
 
 ### Layer 3: `.sentinel/skills/` — define entirely new judgment checks
 
@@ -303,49 +311,73 @@ GHA output:
 
 ---
 
-### v0.3 — Contract drift across boundaries
+### v0.3 — High-value judgment skills + cross-repo as a skill property
 
-**The problem.** A compiler catches broken interfaces within a single language. It cannot see across boundaries: a Protobuf schema changes but the generated client in a downstream service is not regenerated; a Kafka event schema drops a required field but three consumers still expect it; a shared Terraform module removes a variable but callers in two other repos still pass it; a database migration drops a column that application code in a separate repo still queries.
+**The thesis.** Everyone has an LLM. The vertical value is in how many useful judgments you encode. v0.3 ships the first batch of built-in skills that catch real incidents — each one represents a class of production failure that no existing tool prevents. It also introduces cross-repo search as an opt-in property of any skill, not a separate skill.
 
-These are the changes that cause distributed system incidents. They pass every linter, every type checker, and every unit test. They fail in production.
+**Skills that ship:**
 
-**What ships:**
-- `ContractDriftSkill`: reasoning about cross-boundary interface contracts — generated code (proto/OpenAPI/Avro), event schemas, shared module interfaces, database schema vs. application layer consistency
-- **Cross-repo search**: `sentinel.yml` accepts `context.external_repos` — paths from other repos are checked out and included in codebase verification. Same LLM+grep two-step, wider search scope.
-- `fail_on: [critical]` becomes meaningful here — a confirmed event schema break across three consumers is critical
-- New eval fixtures: proto change with stale generated client, Avro schema field removal with live consumer, cross-repo Terraform module caller
+#### WorkflowSecuritySkill
 
-**Cross-repo configuration:**
-```yaml
-# sentinel.yml in my-org/platform
-context:
-  external_repos:
-    - repo: my-org/consumer-service
-      path: src/
-    - repo: my-org/data-pipeline
-      path: jobs/
-```
-Sentinel checks out those paths during review. A proto change in `platform` is verified against callers in `consumer-service` and `data-pipeline`. The same two-step, across repo boundaries.
-
-**What this proves:** The LLM+grep pattern extends across repositories without architectural changes. Cross-repo judgment — what no other tool provides — is a configuration change, not a code change.
-
----
-
-### v0.4 — GHA workflow security
-
-**The problem.** A workflow is added that triggers on `pull_request_target`, checks out `${{ github.event.pull_request.head.sha }}`, and runs `npm install && npm test`. A malicious PR from a fork can modify `package.json` postinstall scripts to run arbitrary commands with the repository's `GITHUB_TOKEN` — which has write access. This is not a hypothetical. It is a documented class of attack that has hit major open-source projects.
+**The burn.** A workflow triggers on `pull_request_target`, checks out `${{ github.event.pull_request.head.sha }}`, and runs `npm install && npm test`. A malicious PR from a fork modifies `package.json` postinstall scripts to run arbitrary commands with the repository's `GITHUB_TOKEN` — which has write access. This is not a hypothetical. It is a documented class of attack that has hit major open-source projects.
 
 Pattern matchers flag unpinned actions. They do not reason about the interaction between trigger types, checkout behavior, and token permissions.
 
-**What ships:**
-- `WorkflowSecuritySkill`: dangerous trigger + checkout combinations, over-broad OIDC trust policies (wildcard branch matching), missing `permissions: {}` blocks, secrets passed via env instead of `--arg`, excessive token scopes
-- Severity `critical` by default for privilege escalation paths — blocks merge if `fail_on: [critical]` is set
+What it checks:
+- Dangerous trigger + checkout combinations (`pull_request_target` + head checkout)
+- Over-broad OIDC trust policies (wildcard branch matching)
+- Missing `permissions: {}` blocks (defaults to write-all)
+- Secrets passed via env instead of `--arg`
+- Excessive token scopes
+- Severity `critical` for privilege escalation paths
 
-**What this proves:** AI reasoning about multi-step attack paths, not just pattern matching. A new built-in skill plugs into the framework (v0.2) with zero runner changes — the extension point works.
+#### MigrationSafetySkill
+
+**The burn.** A migration adds a column with a `NOT NULL DEFAULT` on a 200M-row table. In MySQL < 8.0 and older Postgres, this locks the table for minutes. The migration passes in CI against an empty test database. It takes production down for 12 minutes during deploy.
+
+Migration linters check syntax. They do not reason about table size, lock duration, backward compatibility with running application code, or whether a migration is safe to roll back.
+
+What it checks:
+- Locking operations on potentially large tables (add column with default, add index without CONCURRENTLY)
+- Migrations that aren't backward-compatible with the current running application code
+- Missing rollback path (destructive operations like column drops without a reversible strategy)
+- Data migrations mixed with schema migrations (should be separate deploys)
+- Severity `high` for locking operations, `critical` for irreversible data loss
+
+**Framework capability that ships:**
+
+#### Cross-repo search as a skill property
+
+Cross-repo is not a skill — it's an optional capability any skill can use. When a skill has `cross_repo` configured in `sentinel.yml`, the runner checks out those repos and includes them in the verification scope. The same LLM+grep two-step, wider search surface.
+
+```yaml
+# sentinel.yml
+skills:
+  - change_completeness:
+      cross_repo:
+        - repo: my-org/consumer-service
+        - repo: my-org/data-pipeline
+```
+
+A proto change in `platform` is verified against callers in `consumer-service` and `data-pipeline`. ChangeCompleteness doesn't need new code — the runner widens its grep scope.
+
+This is expensive (repo checkout, longer CI runs) so it's off by default. The repo owner opts in for specific skills where cross-boundary verification matters. Long-term (with agentic verification), the LLM can deduce dependencies from imports — no manual config needed.
+
+#### Merge-gate mode
+
+Some skills are cheap (single diff, fast) and should run on every push. Others are expensive (cross-repo, holistic analysis) and should only run as a final merge gate. The runner supports both:
+
+```yaml
+mode:
+  on_push: [workflow_security, change_completeness]
+  on_merge: [migration_safety]
+```
+
+**What this proves:** The framework's value scales with the number of encoded judgments. Each skill is a vertical slice of expertise — GHA security, migration safety, change completeness — that would otherwise live only in a senior engineer's head. Cross-repo search is a capability dimension, not a skill. The runner supports both cheap-and-frequent and expensive-and-final execution modes.
 
 ---
 
-### v0.5 — Measuring whether it works (evals)
+### v0.4 — Measuring whether it works (evals)
 
 **The problem.** You have been running sentinel for a month. Is it catching real things or generating noise? You changed a prompt and now it flags every `count = 0` resource as a misconfiguration — 40% false positive rate, up from 8%. You do not know this yet.
 
@@ -363,7 +395,7 @@ Almost no AI tooling in the wild ships with evals. Sentinel does, and it runs th
 
 ---
 
-### v0.6 — Context from history
+### v0.5 — Context from history
 
 **The problem.** A PR touches `eks/node-groups/main.tf`. Four months ago, PR #891 made a structurally similar change. After merge, nodes entered `NotReady` state due to a missing taint toleration. The incident lasted 47 minutes. The author of today's PR doesn't know this. Their reviewer joined the team last month.
 
@@ -379,7 +411,7 @@ Sentinel does.
 
 ---
 
-### v0.7 — Sentinel fixes what it finds
+### v0.6 — Sentinel fixes what it finds
 
 **The problem.** Sentinel flags that three callers still pass a removed Terraform variable. A reviewer leaves a comment. The author makes the fix in each file. This is mechanical work that should not require a human round-trip.
 
@@ -394,7 +426,7 @@ Sentinel can fix it. It creates a branch, applies the change, opens a draft PR. 
 
 ---
 
-### v0.8 — Operational agent preview
+### v0.7 — Operational agent preview
 
 **The problem.** Sentinel currently reacts to PRs. But drift happens between PRs too: a shared module is updated in one repo, consumers in other repos are now stale. An infrastructure config is manually changed in the console but not reflected in the Terraform state. A deployment config references a secret that was rotated but the deployment manifest was not updated.
 
@@ -407,7 +439,7 @@ Sentinel can fix it. It creates a branch, applies the change, opens a draft PR. 
 
 ---
 
-### v0.9 — Skill authoring CLI and auto-discovery
+### v0.8 — Skill authoring CLI and auto-discovery
 
 **The problem.** A team wants to add a custom skill but doesn't know what makes a good one. They write a vague prompt, get noisy findings, and turn it off. The gap between "I know what reviewers keep catching" and "I have a working sentinel skill" is too wide.
 
@@ -415,11 +447,11 @@ Sentinel can fix it. It creates a branch, applies the change, opens a draft PR. 
 - `sentinel init-skill` CLI: interactive scaffolding that produces a well-structured `.sentinel/skills/*.md` file. Encodes the anatomy of a good skill: what to check, severity criteria, positive/negative examples, grep verification hints.
 - Skill template with inline guidance — the generated file teaches the author what each section does
 - `sentinel validate-skill`: dry-run a custom skill against a sample diff, shows what findings it would produce before committing
-- **Auto-suggested skills from PR history**: sentinel analyzes merged PRs and reviewer comments (from v0.6 feedback data), identifies recurring patterns ("reviewers flagged missing changelog entries 12 times in 60 days"), and proposes a draft skill. The human reviews, edits, and commits — sentinel doesn't self-create skills.
+- **Auto-suggested skills from PR history**: sentinel analyzes merged PRs and reviewer comments (from v0.5 feedback data), identifies recurring patterns ("reviewers flagged missing changelog entries 12 times in 60 days"), and proposes a draft skill. The human reviews, edits, and commits — sentinel doesn't self-create skills.
 
 **The arc:** Skills start as tribal knowledge in reviewers' heads. `init-skill` helps teams encode what they already know. Auto-suggestion surfaces patterns they haven't noticed yet. The system gets smarter without anyone retraining a model — the intelligence lives in the skill library, not the weights.
 
-**What this proves:** AI tooling can lower its own adoption barrier. The CLI that runs skills also helps you write them. The feedback loop from v0.6 (history) feeds forward into new skills — review comments become codified judgment automatically.
+**What this proves:** AI tooling can lower its own adoption barrier. The CLI that runs skills also helps you write them. The feedback loop from v0.5 (history) feeds forward into new skills — review comments become codified judgment automatically.
 
 ---
 
@@ -429,7 +461,7 @@ Sentinel can fix it. It creates a branch, applies the change, opens a draft PR. 
 - `sentinel` Python package on PyPI — usable as a library
 - `Skill`, `EvalHarness`, `ContextAssembler` as stable public APIs
 - `sentinel init` CLI: scaffolds sentinel config in any repo
-- `sentinel init-skill` CLI: scaffolds custom skills with best-practice structure (from v0.9)
+- `sentinel init-skill` CLI: scaffolds custom skills with best-practice structure (from v0.8)
 - A second repository built on sentinel demonstrating a different domain
 - Full eval history: quality metrics from v0.1 through v1.0, visible in the repo
 
