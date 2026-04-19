@@ -407,12 +407,29 @@ Sentinel can fix it. It creates a branch, applies the change, opens a draft PR. 
 
 ---
 
+### v0.9 — Skill authoring CLI and auto-discovery
+
+**The problem.** A team wants to add a custom skill but doesn't know what makes a good one. They write a vague prompt, get noisy findings, and turn it off. The gap between "I know what reviewers keep catching" and "I have a working sentinel skill" is too wide.
+
+**What ships:**
+- `sentinel init-skill` CLI: interactive scaffolding that produces a well-structured `.sentinel/skills/*.md` file. Encodes the anatomy of a good skill: what to check, severity criteria, positive/negative examples, grep verification hints.
+- Skill template with inline guidance — the generated file teaches the author what each section does
+- `sentinel validate-skill`: dry-run a custom skill against a sample diff, shows what findings it would produce before committing
+- **Auto-suggested skills from PR history**: sentinel analyzes merged PRs and reviewer comments (from v0.6 feedback data), identifies recurring patterns ("reviewers flagged missing changelog entries 12 times in 60 days"), and proposes a draft skill. The human reviews, edits, and commits — sentinel doesn't self-create skills.
+
+**The arc:** Skills start as tribal knowledge in reviewers' heads. `init-skill` helps teams encode what they already know. Auto-suggestion surfaces patterns they haven't noticed yet. The system gets smarter without anyone retraining a model — the intelligence lives in the skill library, not the weights.
+
+**What this proves:** AI tooling can lower its own adoption barrier. The CLI that runs skills also helps you write them. The feedback loop from v0.6 (history) feeds forward into new skills — review comments become codified judgment automatically.
+
+---
+
 ### v1.0 — A framework, not just a tool
 
 **What ships:**
 - `sentinel` Python package on PyPI — usable as a library
 - `Skill`, `EvalHarness`, `ContextAssembler` as stable public APIs
 - `sentinel init` CLI: scaffolds sentinel config in any repo
+- `sentinel init-skill` CLI: scaffolds custom skills with best-practice structure (from v0.9)
 - A second repository built on sentinel demonstrating a different domain
 - Full eval history: quality metrics from v0.1 through v1.0, visible in the repo
 
@@ -427,7 +444,7 @@ The architecture — skill-based analysis, eval harness, prompt versioning, cros
 | Day 1 | Add the GitHub Action, `fail_on: []` | Non-blocking AI review comments appear on PRs |
 | Day 1 | Write `CLAUDE.md` with your team's rules | Reviews enforce your conventions, not generic ones |
 | Week 2 | Enable `fail_on: [critical]` | Genuinely dangerous changes blocked before merge |
-| Week 3 | Add `.sentinel/skills/` custom prompts | Domain-specific judgment checks, no fork needed |
+| Week 3 | `sentinel init-skill` to create custom prompts | Guided skill authoring, domain-specific judgment, no fork needed |
 | Month 2 | Run evals, review the report | You know if sentinel is helping or generating noise |
 | Month 3 | Add cross-repo references in `sentinel.yml` | Changes verified against consumers in other repos |
 | Month 4 | Enable auto-fix for confirmed findings | Mechanical fixes stop requiring human round-trips |
