@@ -1,0 +1,7 @@
+{
+  "description": "A workflow uses pull_request_target trigger and checks out the PR head SHA, then runs npm test. This allows a fork PR to execute arbitrary code with the target repo's secrets and write permissions. Classic privilege escalation attack.",
+  "repo": "example-org/web-app",
+  "pr_number": 87,
+  "instructions": "",
+  "note": "The danger is the COMBINATION: pull_request_target (gives write access) + checkout head.sha (runs attacker code) + npm test (executes it). Each piece alone is fine. Together they are critical."
+}

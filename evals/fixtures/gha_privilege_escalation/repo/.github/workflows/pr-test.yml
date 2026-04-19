@@ -1,0 +1,24 @@
+name: PR Tests
+
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+      - run: npm test
+
+      - run: npm run deploy-preview
+        env:
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}

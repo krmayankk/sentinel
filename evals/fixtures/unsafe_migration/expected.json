@@ -1,0 +1,12 @@
+{
+  "must_find": [
+    {
+      "skill": "migration_safety",
+      "severity_min": "high",
+      "title_contains": ["lock", "index", "CONCURRENTLY", "blocking", "exclusive", "write"],
+      "rationale": "CREATE INDEX without CONCURRENTLY locks the table for writes. On a large table this causes downtime. Must be flagged as high or critical."
+    }
+  ],
+  "must_not_find": [],
+  "verdict": "incomplete"
+}

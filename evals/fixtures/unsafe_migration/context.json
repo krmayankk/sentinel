@@ -1,0 +1,7 @@
+{
+  "description": "A migration adds a NOT NULL column with DEFAULT to a large table and creates a non-concurrent index. Both operations acquire exclusive locks that block writes. The migration passes in CI against an empty test database but will lock production for minutes.",
+  "repo": "example-org/api-service",
+  "pr_number": 156,
+  "instructions": "",
+  "note": "The app code in src/user_service.py actively queries the users table. The index creation without CONCURRENTLY will lock writes. The ADD COLUMN with NOT NULL DEFAULT rewrites the table in older Postgres."
+}

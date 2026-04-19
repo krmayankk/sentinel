@@ -1,0 +1,14 @@
+diff --git a/migrations/0042_add_user_verified.sql b/migrations/0042_add_user_verified.sql
+new file mode 100644
+index 0000000..b2c3d4e
+--- /dev/null
++++ b/migrations/0042_add_user_verified.sql
+@@ -0,0 +1,8 @@
++-- Migration: add verified flag and email index to users table
++-- Ticket: PLAT-2847
++
++ALTER TABLE users ADD COLUMN verified BOOLEAN NOT NULL DEFAULT false;
++
++CREATE INDEX idx_users_email ON users(email);
++
++ALTER TABLE users DROP COLUMN legacy_status;

@@ -1,0 +1,12 @@
+{
+  "must_find": [
+    {
+      "skill": "workflow_security",
+      "severity_min": "high",
+      "title_contains": ["privilege", "escalation", "pull_request_target", "checkout", "dangerous", "arbitrary", "write", "secret"],
+      "rationale": "pull_request_target + head checkout + script execution is a well-documented privilege escalation. Must be flagged as high or critical."
+    }
+  ],
+  "must_not_find": [],
+  "verdict": "incomplete"
+}

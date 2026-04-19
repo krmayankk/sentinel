@@ -71,42 +71,50 @@ def _check_must_find(findings: list, rule: dict) -> bool:
     return False
 
 
+def _run_fixture(name: str):
+    """Load a fixture, run skills, and assert expectations."""
+    diff, ctx_data, expected, repo_path = _load_fixture(name)
+
+    config = load_config(repo_path)
+    context = Context(
+        repo=ctx_data.get("repo", "test/repo"),
+        pr_number=ctx_data.get("pr_number", 0),
+        instructions=ctx_data.get("instructions", ""),
+        repo_path=repo_path,
+    )
+
+    results = run_skills(diff, context, config, model="claude-sonnet-4-6")
+    all_findings = [f for findings in results.values() for f in findings]
+
+    for rule in expected.get("must_find", []):
+        assert _check_must_find(all_findings, rule), (
+            f"must_find rule not satisfied: {rule.get('rationale', rule)}\n"
+            f"Findings: {[(f.skill, f.severity.value, f.title) for f in all_findings]}"
+        )
+
+    for rule in expected.get("must_not_find", []):
+        assert not _check_must_find(all_findings, rule), (
+            f"must_not_find rule violated: {rule.get('rationale', rule)}\n"
+            f"Findings: {[(f.skill, f.severity.value, f.title) for f in all_findings]}"
+        )
+
+    if expected.get("verdict") == "incomplete":
+        assert len(all_findings) > 0, "Expected incomplete verdict but got no findings"
+    elif expected.get("verdict") == "complete":
+        assert len(all_findings) == 0, (
+            f"Expected complete verdict but got {len(all_findings)} finding(s): "
+            f"{[(f.skill, f.severity.value, f.title) for f in all_findings]}"
+        )
+
+
 class TestFixtures:
     """Run each eval fixture as an integration test."""
 
     def test_terraform_variable_removed(self):
-        diff, ctx_data, expected, repo_path = _load_fixture("terraform_variable_removed")
+        _run_fixture("terraform_variable_removed")
 
-        config = load_config(repo_path)
-        context = Context(
-            repo=ctx_data.get("repo", "test/repo"),
-            pr_number=ctx_data.get("pr_number", 0),
-            instructions=ctx_data.get("instructions", ""),
-            repo_path=repo_path,
-        )
+    def test_gha_privilege_escalation(self):
+        _run_fixture("gha_privilege_escalation")
 
-        results = run_skills(diff, context, config, model="claude-sonnet-4-6")
-        all_findings = [f for findings in results.values() for f in findings]
-
-        # must_find: at least one finding matches each rule
-        for rule in expected.get("must_find", []):
-            assert _check_must_find(all_findings, rule), (
-                f"must_find rule not satisfied: {rule.get('rationale', rule)}\n"
-                f"Findings: {[(f.skill, f.severity.value, f.title) for f in all_findings]}"
-            )
-
-        # must_not_find: no finding matches any rule
-        for rule in expected.get("must_not_find", []):
-            assert not _check_must_find(all_findings, rule), (
-                f"must_not_find rule violated: {rule.get('rationale', rule)}\n"
-                f"Findings: {[(f.skill, f.severity.value, f.title) for f in all_findings]}"
-            )
-
-        # verdict
-        if expected.get("verdict") == "incomplete":
-            assert len(all_findings) > 0, "Expected incomplete verdict but got no findings"
-        elif expected.get("verdict") == "complete":
-            assert len(all_findings) == 0, (
-                f"Expected complete verdict but got {len(all_findings)} finding(s): "
-                f"{[(f.skill, f.severity.value, f.title) for f in all_findings]}"
-            )
+    def test_unsafe_migration(self):
+        _run_fixture("unsafe_migration")
