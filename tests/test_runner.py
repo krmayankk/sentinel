@@ -112,3 +112,93 @@ def test_mode_filter_none_runs_all():
     skills = _resolve_skills(config, "", "claude-sonnet-4-6", event_type="")
     names = {s.name for s in skills}
     assert names == {"change_completeness", "workflow_security"}
+
+
+# -- routing tests --
+
+_WORKFLOW_DIFF = """\
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index abc..def 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -1 +1 @@
+-old
++new
+"""
+
+_MIGRATION_DIFF = """\
+diff --git a/migrations/0042_add_col.sql b/migrations/0042_add_col.sql
+new file mode 100644
+--- /dev/null
++++ b/migrations/0042_add_col.sql
+@@ -0,0 +1 @@
++ALTER TABLE users ADD COLUMN verified BOOLEAN;
+"""
+
+_PYTHON_DIFF = """\
+diff --git a/src/app.py b/src/app.py
+index abc..def 100644
+--- a/src/app.py
++++ b/src/app.py
+@@ -1 +1 @@
+-old
++new
+"""
+
+_MIXED_DIFF = _WORKFLOW_DIFF + _MIGRATION_DIFF
+
+
+def _routed_config():
+    from sentinel.config import Route
+    return _config(
+        ["change_completeness", "workflow_security", "migration_safety"],
+        routing=[
+            Route(pattern=".github/workflows/**", skills=["workflow_security"]),
+            Route(pattern="migrations/**", skills=["migration_safety"]),
+        ],
+    )
+
+
+def test_routing_workflow_only():
+    config = _routed_config()
+    skills = _resolve_skills(config, "", "claude-sonnet-4-6", diff=_WORKFLOW_DIFF)
+    names = {s.name for s in skills}
+    assert names == {"workflow_security"}
+
+
+def test_routing_migration_only():
+    config = _routed_config()
+    skills = _resolve_skills(config, "", "claude-sonnet-4-6", diff=_MIGRATION_DIFF)
+    names = {s.name for s in skills}
+    assert names == {"migration_safety"}
+
+
+def test_routing_mixed_diff():
+    config = _routed_config()
+    skills = _resolve_skills(config, "", "claude-sonnet-4-6", diff=_MIXED_DIFF)
+    names = {s.name for s in skills}
+    assert names == {"workflow_security", "migration_safety"}
+
+
+def test_routing_unmatched_file_falls_back():
+    """Files not matching any route trigger the top-level skills list."""
+    config = _routed_config()
+    skills = _resolve_skills(config, "", "claude-sonnet-4-6", diff=_PYTHON_DIFF)
+    names = {s.name for s in skills}
+    # src/app.py doesn't match any route → falls back to all configured skills
+    assert "change_completeness" in names
+
+
+def test_routing_no_routes_runs_all():
+    """No routing config → all configured skills run regardless of diff."""
+    config = _config(["change_completeness", "workflow_security"])
+    skills = _resolve_skills(config, "", "claude-sonnet-4-6", diff=_WORKFLOW_DIFF)
+    names = {s.name for s in skills}
+    assert names == {"change_completeness", "workflow_security"}
+
+
+def test_routing_empty_diff_runs_all():
+    config = _routed_config()
+    skills = _resolve_skills(config, "", "claude-sonnet-4-6", diff="")
+    names = {s.name for s in skills}
+    assert names == {"change_completeness", "workflow_security", "migration_safety"}

@@ -2,14 +2,16 @@
 
 Replaces the v0.1 hardcoded single-skill call with a framework that:
 1. Reads sentinel.yml to determine which skills to run
-2. Discovers built-in skills + custom skills from .sentinel/skills/
-3. Handles cross-repo checkout for skills that opt in
-4. Supports mode filtering (on_push vs on_merge)
-5. Returns all findings tagged by skill name
+2. Routes skills based on which files changed in the diff
+3. Discovers built-in skills + custom skills from .sentinel/skills/
+4. Handles cross-repo checkout for skills that opt in
+5. Supports mode filtering (on_push vs on_merge)
+6. Returns all findings tagged by skill name
 """
 from __future__ import annotations
 
 import os
+import re
 
 from sentinel.config import SentinelConfig
 from sentinel.core import Context, Finding, Skill
@@ -41,7 +43,7 @@ def run_skills(
 
     Returns a dict: {"change_completeness": [...], "cost_attribution": [...]}
     """
-    skills = _resolve_skills(config, context.repo_path, model, event_type)
+    skills = _resolve_skills(config, context.repo_path, model, event_type, diff)
 
     # Set up cross-repo search paths for skills that opt in
     cross_repo_paths: list[str] = []
@@ -83,32 +85,83 @@ def _collect_cross_repos(config: SentinelConfig, skill_names: list[str]) -> list
     return repos
 
 
+def _skills_for_diff(config: SentinelConfig, diff: str) -> set[str] | None:
+    """Determine which skills to run based on changed files and routing rules.
+
+    Returns None if no routing rules exist (run all configured skills).
+    Returns a set of skill names when routing rules match changed files.
+    For files that don't match any route, the top-level skills list applies.
+    """
+    if not config.routing:
+        return None
+
+    changed = _changed_files(diff)
+    if not changed:
+        return None
+
+    matched_skills: set[str] = set()
+    for path in changed:
+        routed = config.skills_for_file(path)
+        if routed:
+            matched_skills.update(routed)
+        else:
+            # No route matched this file — fall back to top-level skills
+            matched_skills.update(config.skills)
+
+    return matched_skills
+
+
+def _changed_files(diff: str) -> set[str]:
+    """Extract file paths from a unified diff."""
+    changed: set[str] = set()
+    for line in diff.splitlines():
+        if line.startswith("diff --git"):
+            parts = line.split(" ")
+            if len(parts) >= 4:
+                changed.add(parts[-1].lstrip("b/"))
+    return changed
+
+
 def _resolve_skills(
-    config: SentinelConfig, repo_path: str, model: str, event_type: str = "",
+    config: SentinelConfig, repo_path: str, model: str,
+    event_type: str = "", diff: str = "",
 ) -> list[Skill]:
-    """Build the list of skills to run from config + discovery + mode filter."""
-    # Determine which skill names are allowed for this event type
-    allowed_names = config.skills_for_mode(event_type) if event_type else config.skills
+    """Build the list of skills to run from config + routing + discovery + mode filter."""
+    # 1. Mode filter: which skills are allowed for this event type
+    allowed_by_mode = set(config.skills_for_mode(event_type) if event_type else config.skills)
+
+    # 2. Routing filter: which skills are relevant to the changed files
+    routed = _skills_for_diff(config, diff)
 
     skills: list[Skill] = []
+    seen: set[str] = set()
 
-    # Built-in skills listed in config and allowed by mode
+    # Built-in skills: must be in config, allowed by mode, and (if routing exists) routed
     for name in config.skills:
-        if name not in allowed_names:
+        if name not in allowed_by_mode:
+            continue
+        if routed is not None and name not in routed:
             continue
         cls = _BUILTIN_SKILLS.get(name)
-        if cls:
+        if cls and name not in seen:
             skills.append(cls(model=model))
+            seen.add(name)
 
     # Custom skills from .sentinel/skills/ in the target repo
     if repo_path:
         custom = load_custom_skills(repo_path, model=model)
         for cs in custom:
-            if event_type and cs.name not in allowed_names:
+            if cs.name in seen:
                 continue
-            if cs.name not in config.skills:
+            if event_type and cs.name not in allowed_by_mode:
+                continue
+            if routed is not None and cs.name not in routed:
+                continue
+            if cs.name not in config.skills or cs.name not in _BUILTIN_SKILLS:
                 skills.append(cs)
-            elif cs.name not in _BUILTIN_SKILLS:
-                skills.append(cs)
+                seen.add(cs.name)
+
+    if routed is not None and skills:
+        print(f"sentinel: routing → {', '.join(s.name for s in skills)} (based on changed files)")
 
     return skills
