@@ -10,6 +10,48 @@ import anthropic
 
 from sentinel.core import Context, Finding, Severity, Skill
 
+def _extract_json(raw: str) -> dict | None:
+    """Extract a JSON object from a model response, handling common LLM quirks.
+
+    Tries in order:
+    1. Direct parse (response is pure JSON)
+    2. Strip markdown fences (```json ... ```)
+    3. Find first { ... } block in the response
+    """
+    text = raw.strip()
+
+    # 1. Direct parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Strip markdown fences
+    fenced = re.sub(r"^```(?:json)?\s*", "", text, flags=re.MULTILINE)
+    fenced = re.sub(r"\s*```\s*$", "", fenced, flags=re.MULTILINE)
+    try:
+        return json.loads(fenced)
+    except json.JSONDecodeError:
+        pass
+
+    # 3. Find the first JSON object in the response
+    brace_start = text.find("{")
+    if brace_start >= 0:
+        depth = 0
+        for i in range(brace_start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[brace_start:i + 1])
+                    except json.JSONDecodeError:
+                        break
+
+    return None
+
+
 _RESPONSE_FORMAT = """\
 ## Response
 Return valid JSON only — no prose, no markdown fences:
@@ -72,10 +114,8 @@ class LLMSkill(Skill):
         return response.content[0].text
 
     def _parse(self, raw: str) -> list[Finding]:
-        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.MULTILINE)
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
+        data = _extract_json(raw)
+        if data is None:
             return [
                 Finding(
                     skill=self.name,
