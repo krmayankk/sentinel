@@ -84,7 +84,7 @@ class LLMSkill(Skill):
     Subclasses implement _build_prompt(). Everything else is shared.
     """
 
-    def __init__(self, model: str = "claude-sonnet-4-6", max_tokens: int = 1024) -> None:
+    def __init__(self, model: str = "claude-sonnet-4-6", max_tokens: int = 4096) -> None:
         self._client = anthropic.Anthropic()
         self._model = model
         self._max_tokens = max_tokens
@@ -111,9 +111,7 @@ class LLMSkill(Skill):
             max_tokens=self._max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
-        raw = response.content[0].text
-        print(f"sentinel: raw LLM response ({len(raw)} chars): {raw[:500]}")
-        return raw
+        return response.content[0].text
 
     def _parse(self, raw: str) -> list[Finding]:
         data = _extract_json(raw)
