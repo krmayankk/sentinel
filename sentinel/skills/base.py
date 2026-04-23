@@ -111,7 +111,9 @@ class LLMSkill(Skill):
             max_tokens=self._max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
-        return response.content[0].text
+        raw = response.content[0].text
+        print(f"sentinel: raw LLM response ({len(raw)} chars): {raw[:500]}")
+        return raw
 
     def _parse(self, raw: str) -> list[Finding]:
         data = _extract_json(raw)
