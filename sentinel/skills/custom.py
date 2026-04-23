@@ -50,13 +50,13 @@ class CustomSkill(LLMSkill):
     def _build_prompt(self, diff: str, context: Context) -> str:
         custom_rules_section = ""
         if context.instructions.strip():
-            custom_rules_section = _CUSTOM_RULES_SECTION.format(
-                rules=context.instructions.strip()
+            custom_rules_section = _CUSTOM_RULES_SECTION.replace(
+                "{rules}", context.instructions.strip()
             )
-        return _WRAPPER.format(
-            skill_prompt=self._prompt_text,
-            diff=diff,
-            custom_rules_section=custom_rules_section,
+        return (_WRAPPER
+            .replace("{skill_prompt}", self._prompt_text)
+            .replace("{diff}", diff)
+            .replace("{custom_rules_section}", custom_rules_section)
         )
 
 

@@ -55,9 +55,9 @@ def _extract_json(raw: str) -> dict | None:
 _RESPONSE_FORMAT = """\
 ## Response
 Return valid JSON only — no prose, no markdown fences:
-{{
+{
   "findings": [
-    {{
+    {
       "severity": "high|medium|low",
       "title": "short descriptive title",
       "message": "what is missing and why it matters, with exact file paths from the diff",
@@ -65,10 +65,10 @@ Return valid JSON only — no prose, no markdown fences:
       "file": "path/to/the/changed/file",
       "line": 0,
       "search_for": "exact string to grep for in the repo, or empty string if not applicable"
-    }}
+    }
   ],
   "summary": "one sentence — what was found or confirmed complete"
-}}
+}
 """
 
 _EXCLUDE_DIRS = [
