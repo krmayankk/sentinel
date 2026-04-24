@@ -105,7 +105,7 @@ def _run_gha(model: str, fail_on: set[str], event_type: str = "") -> None:
 
     _print_findings(results, source=f"{repo}#{pr_number}")
     _emit_gha_annotations(all_findings)
-    post_findings(repo, pr_number, all_findings, github_token)
+    post_findings(repo, pr_number, results, github_token)
 
     if fail_on:
         blocking = [f for f in all_findings if f.severity.value in fail_on]
