@@ -53,22 +53,32 @@ Context Assembly
   |-- past PR history + incidents (semantic retrieval)
     |
     v
-Skill Execution (parallel, per sentinel.yml routing)
-  |-- ChangeCompletenessSkill      <- v0.1: did you update all the dependents?
-  |-- WorkflowSecuritySkill        <- v0.3: GHA privilege escalation paths
-  |-- MigrationSafetySkill         <- v0.3: unsafe schema migrations
-  |-- [.sentinel/skills/*.md]      <- v0.2+: team-defined, no fork needed
-  |-- Any skill can opt into cross-repo search (expensive, off by default)
-    |
-    v
-Verification
-  |-- Current: grep the repo for the search term (fast, deterministic, free)
-  |-- Future: LLM reads relevant files and reasons about them (agentic loop)
-  |-- Callers found -> finding confirmed, severity elevated, exact locations reported
-  |-- No callers found -> finding dismissed (no speculation)
-  |-- Note: grep cannot reason about absence ("key missing from file B").
-  |--   As context windows grow and costs drop, LLM-based verification
-  |--   replaces grep — same Skill ABC, different verification backend.
+Skill Execution (per sentinel.yml routing)
+  |-- Two context modes, controlled per-skill:
+  |
+  |-- context: diff (default) — single LLM call, no tools, zero extra cost
+  |     The diff is the whole story. Skill reasons about what it sees.
+  |     Used by: workflow_security, migration_safety
+  |
+  |-- context: repo — tool-use loop with budget
+  |     The LLM explores the codebase to understand impact.
+  |     Tools available: grep, read_file, list_files (read-only)
+  |     max_turns controls depth/cost — same implementation, different budget.
+  |     max_turns: 2 ≈ cheap scan (one grep, read results)
+  |     max_turns: 10 ≈ deep analysis (follow dependency chains)
+  |     Used by: change_completeness, custom skills that opt in
+  |     Cross-repo: when enabled, tools search cloned repos too — same loop.
+  |
+  |-- ChangeCompletenessSkill      <- context: repo (explores callers)
+  |-- WorkflowSecuritySkill        <- context: diff (YAML is self-contained)
+  |-- MigrationSafetySkill         <- context: diff (SQL is self-contained)
+  |-- [.sentinel/skills/*.md]      <- opt-in via frontmatter `context: repo`
+  |-- Language-agnostic: the LLM knows what to grep for in any language.
+  |     No regex, no parser, no per-language patterns to maintain.
+  |
+  |-- Budget examples:
+  |     on_push: { max_turns: 2 }    — fast, cheap, every commit
+  |     on_merge: { max_turns: 10 }  — thorough, final gate only
     |
     v
 Output -> GitHub
@@ -279,7 +289,7 @@ Sentinel reasons across files. It understands that a change to a module interfac
 
 **Works on:** any repo, any language. The reasoning is about relationships between files, not syntax.
 
-**What this proved:** The LLM+grep two-step eliminates speculation. Judgment-level review is possible with a single API call plus codebase verification. CLAUDE.md as a customization surface works — freeform English beats a DSL.
+**What this proved:** The LLM+grep two-step eliminates speculation. Judgment-level review is possible with a single API call plus codebase verification. CLAUDE.md as a customization surface works — freeform English beats a DSL. Later upgraded to agentic context gathering (v0.3) — skills that need it can explore the repo with tools before judging.
 
 ---
 
@@ -344,7 +354,58 @@ What it checks:
 - Data migrations mixed with schema migrations (should be separate deploys)
 - Severity `high` for locking operations, `critical` for irreversible data loss
 
-**Framework capability that ships:**
+**Framework capabilities that ship:**
+
+#### Agentic context gathering (tool-use loop)
+
+The diff alone is not enough for skills that reason about dependencies. If you rename a function in `foo.py`, the breakage is in `bar.py` — but `bar.py` isn't in the diff. The LLM guesses blind, then grep confirms after. Better: let the LLM explore the repo *before* it judges.
+
+**Alternatives we rejected:**
+- Regex symbol extraction — brittle, language-specific, patterns to maintain per language forever.
+- Haiku scout call — slightly smarter grep, but still one-shot guessing. Doesn't follow dependency chains.
+- Send all files — drowns signal in noise, blows token budget.
+- Send only changed files — misses the point. Impact is in files that *didn't* change.
+
+**The design: tool-use loop with budget.** Skills that need codebase context use Anthropic's tool-use API. The LLM gets three read-only tools (`grep`, `read_file`, `list_files`) and explores the repo in a bounded loop, deciding what to look at based on what it finds. This is the same pattern Claude Code uses — but scoped to three tools, read-only, with a hard turn limit.
+
+```
+1. Sonnet receives: diff + tools (grep, read_file, list_files)
+2. Sonnet calls: grep("process_order", ".")
+3. Runner executes, returns results
+4. Sonnet calls: read_file("billing/charge.py")
+5. Runner executes, returns file content
+6. Sonnet: "I've seen enough" → returns findings JSON
+   Or: max_turns hit → forced to return findings with what it has
+```
+
+**Per-skill config:**
+```yaml
+skills:
+  - change_completeness:        # context: repo is the default for this built-in
+      max_turns: 5
+  - workflow_security            # context: diff (default, zero extra cost)
+  - migration_safety
+```
+
+**`max_turns` is the only cost knob.** Same skill, same code, different budget:
+- `max_turns: 0` = diff-only (today's behavior)
+- `max_turns: 2` = quick exploration (one grep, read top files)
+- `max_turns: 10` = thorough merge-gate analysis (follow dependency chains)
+
+**Custom skills opt in via frontmatter:**
+```markdown
+---
+context: repo
+max_turns: 3
+---
+Check that every new AWS resource has a cost_center tag...
+```
+
+**Language-agnostic.** The LLM understands Go imports, Python modules, Terraform variables, YAML references, proto schemas — any language. No per-language patterns to maintain. The tools are file operations; the intelligence is in the model.
+
+**Works with cross-repo.** When `cross_repo` is enabled, the tools search cloned repos too. The LLM doesn't need to know they're separate repos — grep returns results from all search paths. Same loop, wider scope.
+
+**Verify becomes optional.** For `context: repo` skills, the LLM already explored the codebase. The post-judgment grep verify step is redundant in most cases. We keep it as a lightweight safety net but it's no longer load-bearing.
 
 #### Cross-repo search as a skill property
 
