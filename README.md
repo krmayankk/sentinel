@@ -57,6 +57,60 @@ Push to `CLAUDE.md` and the next PR picks it up. No redeployment, no DSL to lear
 
 ---
 
+## Built-in skills
+
+Sentinel ships with skills that catch real incident classes no existing tool prevents:
+
+| Skill | What it catches | Severity |
+|---|---|---|
+| `change_completeness` | Renamed function but callers not updated. Removed Terraform variable but three envs still pass it. | high |
+| `workflow_security` | GHA `pull_request_target` + head checkout = privilege escalation. Missing `permissions:` block. Secrets exposed to untrusted code. | critical |
+| `migration_safety` | `CREATE INDEX` without `CONCURRENTLY` locks writes for minutes. `DROP COLUMN` on a table the app still queries. | high/critical |
+
+Each skill is a prompt that teaches the LLM what to reason about, plugged into the same pipeline: prompt → LLM → parse findings → grep verify.
+
+---
+
+## Configuring with sentinel.yml
+
+Control which skills run, what blocks merge, and which skills apply to which files:
+
+```yaml
+# sentinel.yml
+skills:
+  - change_completeness
+  - workflow_security
+  - migration_safety
+
+fail_on: [critical, high]
+
+routing:
+  - pattern: ".github/workflows/**"
+    skills: [workflow_security]
+  - pattern: "migrations/**"
+    skills: [migration_safety]
+```
+
+**Routing** maps file patterns to skills. When a PR only changes workflow files, only `workflow_security` runs — saves API tokens and eliminates noise. Files that don't match any route fall back to the full skills list. Routing works the same for built-in and custom skills.
+
+---
+
+## Custom skills
+
+Define new judgment checks as markdown files in `.sentinel/skills/`. Each file becomes a skill that runs alongside built-in ones through the same pipeline.
+
+```markdown
+# .sentinel/skills/cost_attribution.md
+Check that every new AWS resource (S3, RDS, Lambda, ECS) has a
+`cost_center` tag. Missing tags on production resources have caused
+unattributed spend incidents. Severity: high for production resources
+(anything under terraform/envs/prod/), medium for staging/dev.
+```
+
+Add the file, push, and the next PR runs it. No fork, no code change, no redeployment.
+
+---
+
 ## Run locally
 
 ```bash
