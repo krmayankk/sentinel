@@ -151,9 +151,12 @@ def _resolve_skills(
     # Custom skills always run — they're opt-in by definition (added to the repo).
     # Routing only filters built-in skills; custom skills bypass it.
     if repo_path:
+        print(f"sentinel: searching for custom skills in {repo_path}/.sentinel/skills/")
         custom = load_custom_skills(repo_path, model=model)
         if custom:
             print(f"sentinel: discovered {len(custom)} custom skill(s): {', '.join(cs.name for cs in custom)}")
+        else:
+            print(f"sentinel: no custom skills found")
         for cs in custom:
             if cs.name in seen:
                 continue
