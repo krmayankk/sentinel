@@ -152,6 +152,8 @@ def _resolve_skills(
     # Routing only filters built-in skills; custom skills bypass it.
     if repo_path:
         custom = load_custom_skills(repo_path, model=model)
+        if custom:
+            print(f"sentinel: discovered {len(custom)} custom skill(s): {', '.join(cs.name for cs in custom)}")
         for cs in custom:
             if cs.name in seen:
                 continue
