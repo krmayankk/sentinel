@@ -50,11 +50,14 @@ store config or deployment manifest?
 {diff}
 
 ## Instructions
-- Use the available tools to verify before reporting. Grep for symbols, read \
-files to check registrations, list directories to confirm test files exist.
+- VERIFY BEFORE REPORTING. Every finding must be backed by tool evidence. \
+If you think a registration exists, read the file to confirm. If you think \
+a test file exists, list the directory or grep for it. Do NOT use words like \
+"likely", "probably", or "may" — if you haven't confirmed it with a tool, \
+it is not a finding.
 - Only report gaps that will cause a concrete, demonstrable problem.
-- Include evidence from the codebase in your findings (e.g. "grep found 3 callers \
-of old_name that were not updated").
+- Include the tool evidence in your findings (e.g. "read runner.py and confirmed \
+3 callers of old_name that were not updated").
 - Reference exact file paths and line numbers.
 - Return findings ordered by severity, most severe first.
 

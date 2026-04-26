@@ -20,7 +20,7 @@
 - Always add fixtures when adding new skills.
 
 ## Architecture
-- Skills follow the pipeline: prompt → LLM → parse JSON → grep verify.
+- Every skill is an agentic loop. Diff is the first input. The LLM can explore the repo with tools (grep, read_file, list_files). max_turns controls the budget (0 = diff-only, 3 = light, 10 = deep).
 - New skills subclass LLMSkill and implement _build_prompt().
 - sentinel.yml controls what runs. CLAUDE.md teaches skills what to look for.
 - Four customization layers: org config → CLAUDE.md → sentinel.yml → .sentinel/skills/
