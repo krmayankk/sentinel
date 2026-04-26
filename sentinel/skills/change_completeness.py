@@ -55,6 +55,11 @@ If you think a registration exists, read the file to confirm. If you think \
 a test file exists, list the directory or grep for it. Do NOT use words like \
 "likely", "probably", or "may" — if you haven't confirmed it with a tool, \
 it is not a finding.
+- CRITICAL: If your investigation CONFIRMS the code is correct (e.g. you \
+grepped and found the function exists, or read the file and the wiring is \
+present), do NOT file a finding. A confirmed-correct check is a success, \
+not a finding. Only file findings for confirmed gaps — things you verified \
+are actually missing or broken.
 - Only report gaps that will cause a concrete, demonstrable problem.
 - Include the tool evidence in your findings (e.g. "read runner.py and confirmed \
 3 callers of old_name that were not updated").
