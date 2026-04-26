@@ -315,20 +315,37 @@ class LLMSkill(Skill):
                 messages.append({"role": "assistant", "content": assistant_content})
                 messages.append({"role": "user", "content": tool_results})
 
-                # If we've hit the budget, force a final response without tools
+                # If we've hit the budget, ask for final JSON response
                 if turns_used >= self.max_turns:
-                    response = self._client.messages.create(
-                        model=self._model,
-                        max_tokens=agentic_max_tokens,
-                        messages=messages,
-                    )
-                    return self._parse(self._extract_text(response))
+                    return self._force_json_response(messages, agentic_max_tokens)
             else:
-                # Model returned text (findings) — done
-                return self._parse(self._extract_text(response))
+                # Model returned — extract and try to parse
+                raw = self._extract_text(response)
+                if _extract_json(raw):
+                    return self._parse(raw)
+                # Model returned text but not JSON — ask for JSON explicitly
+                messages.append({"role": "assistant", "content": response.content})
+                return self._force_json_response(messages, agentic_max_tokens)
 
         # Should not reach here, but safety fallback
         return []
+
+    def _force_json_response(self, messages: list, max_tokens: int) -> list[Finding]:
+        """Send a follow-up asking the model to return findings as JSON."""
+        messages.append({
+            "role": "user",
+            "content": (
+                "Now return your findings as valid JSON. Do not use any tools. "
+                "Do not include any prose or explanation — only the JSON object.\n\n"
+                + _RESPONSE_FORMAT
+            ),
+        })
+        response = self._client.messages.create(
+            model=self._model,
+            max_tokens=max_tokens,
+            messages=messages,
+        )
+        return self._parse(self._extract_text(response))
 
     def _extract_text(self, response) -> str:
         """Extract text content from a response that may contain mixed blocks."""
