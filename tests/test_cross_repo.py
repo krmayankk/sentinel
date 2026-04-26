@@ -58,11 +58,13 @@ def test_checkout_repos_reuses_existing_dir():
 
 
 def test_checkout_repos_uses_askpass_for_token():
-    """When token is provided, GIT_ASKPASS is used instead of embedding in URL."""
+    """When token is provided, GIT_ASKPASS + env var is used instead of embedding in URL."""
     captured_env = {}
+    captured_urls = []
 
     def capture_clone(args, **kwargs):
         captured_env.update(kwargs.get("env", {}))
+        captured_urls.append(args[-2])
         repo_dir = args[-1]
         os.makedirs(repo_dir, exist_ok=True)
         return subprocess.CompletedProcess(args, 0, "", "")
@@ -71,11 +73,13 @@ def test_checkout_repos_uses_askpass_for_token():
         with patch("sentinel.cross_repo.subprocess.run", side_effect=capture_clone):
             checkout_repos(["org/repo-a"], token="ghp_test123", workspace=workspace)
 
-    # Token must NOT be in the URL
-    assert "ghp_test123" not in captured_env.get("GIT_ASKPASS", "")
+    # Token must NOT be in the clone URL
+    assert "ghp_test123" not in captured_urls[0]
     # GIT_ASKPASS script must be set
     assert "GIT_ASKPASS" in captured_env
     assert captured_env["GIT_TERMINAL_PROMPT"] == "0"
+    # Token passed via env var, not embedded in script
+    assert captured_env["SENTINEL_GIT_TOKEN"] == "ghp_test123"
 
 
 def test_cleanup_repos_removes_dirs():

@@ -12,11 +12,15 @@ import subprocess
 import tempfile
 
 
-def _write_askpass_script(token: str, workspace: str) -> str:
-    """Write a temporary GIT_ASKPASS script that echoes the token."""
+def _write_askpass_script(workspace: str) -> str:
+    """Write a GIT_ASKPASS script that reads the token from an env var.
+
+    The script echoes $SENTINEL_GIT_TOKEN so the token is never written
+    to disk — only passed via the subprocess environment.
+    """
     script_path = os.path.join(workspace, ".git-askpass.sh")
     with open(script_path, "w") as f:
-        f.write(f"#!/bin/sh\necho '{token}'\n")
+        f.write('#!/bin/sh\nprintf \'%s\' "$SENTINEL_GIT_TOKEN"\n')
     os.chmod(script_path, stat.S_IRWXU)
     return script_path
 
@@ -40,33 +44,34 @@ def checkout_repos(repos: list[str], token: str = "", workspace: str = "") -> li
 
     askpass_script = ""
     if token:
-        askpass_script = _write_askpass_script(token, workspace)
+        askpass_script = _write_askpass_script(workspace)
 
     paths = []
-    for repo in repos:
-        repo_dir = os.path.join(workspace, repo.replace("/", "_"))
-        if os.path.isdir(repo_dir):
-            paths.append(repo_dir)
-            continue
+    try:
+        for repo in repos:
+            repo_dir = os.path.join(workspace, repo.replace("/", "_"))
+            if os.path.isdir(repo_dir):
+                paths.append(repo_dir)
+                continue
 
-        url = f"https://x-access-token@github.com/{repo}.git"
+            url = f"https://x-access-token@github.com/{repo}.git"
 
-        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
-        if askpass_script:
-            env["GIT_ASKPASS"] = askpass_script
+            env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+            if askpass_script:
+                env["GIT_ASKPASS"] = askpass_script
+                env["SENTINEL_GIT_TOKEN"] = token
 
-        result = subprocess.run(
-            ["git", "clone", "--depth", "1", "--single-branch", url, repo_dir],
-            capture_output=True, text=True, env=env,
-        )
-        if result.returncode == 0:
-            paths.append(repo_dir)
-        else:
-            print(f"sentinel: warning: failed to clone {repo}: {result.stderr.strip()}")
-
-    # Clean up askpass script
-    if askpass_script and os.path.exists(askpass_script):
-        os.remove(askpass_script)
+            result = subprocess.run(
+                ["git", "clone", "--depth", "1", "--single-branch", url, repo_dir],
+                capture_output=True, text=True, env=env,
+            )
+            if result.returncode == 0:
+                paths.append(repo_dir)
+            else:
+                print(f"sentinel: warning: failed to clone {repo}: {result.stderr.strip()}")
+    finally:
+        if askpass_script and os.path.exists(askpass_script):
+            os.remove(askpass_script)
 
     return paths
 
