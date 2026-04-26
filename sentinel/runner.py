@@ -148,18 +148,19 @@ def _resolve_skills(
             seen.add(name)
 
     # Custom skills from .sentinel/skills/ in the target repo
+    # Custom skills always run — they're opt-in by definition (added to the repo).
+    # Routing only filters built-in skills; custom skills bypass it.
     if repo_path:
         custom = load_custom_skills(repo_path, model=model)
+        if custom:
+            print(f"sentinel: discovered {len(custom)} custom skill(s): {', '.join(cs.name for cs in custom)}")
         for cs in custom:
             if cs.name in seen:
                 continue
             if event_type and cs.name not in allowed_by_mode:
                 continue
-            if routed is not None and cs.name not in routed:
-                continue
-            if cs.name not in config.skills or cs.name not in _BUILTIN_SKILLS:
-                skills.append(cs)
-                seen.add(cs.name)
+            skills.append(cs)
+            seen.add(cs.name)
 
     if routed is not None and skills:
         print(f"sentinel: routing → {', '.join(s.name for s in skills)} (based on changed files)")
