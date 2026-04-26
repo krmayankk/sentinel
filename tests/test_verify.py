@@ -85,7 +85,8 @@ def test_verify_dismisses_when_no_callers():
             search_for="enable_perf",
         )
         verified = _verify([finding], "test", d)
-        assert len(verified) == 0  # dismissed
+        assert len(verified) == 1  # kept — finding may be about absence
+        assert "Confirmed" not in verified[0].message  # but not elevated
 
 
 def test_verify_passes_through_no_search_term():
@@ -131,8 +132,8 @@ def test_verify_with_extra_search_paths():
             assert verified[0].severity == Severity.HIGH  # elevated
 
 
-def test_verify_dismissed_even_with_extra_paths():
-    """If neither main nor extra repos have callers, finding is dismissed."""
+def test_verify_kept_without_elevation_when_no_matches_with_extra_paths():
+    """If neither main nor extra repos have callers, finding is kept but not elevated."""
     with tempfile.TemporaryDirectory() as main_repo:
         with tempfile.TemporaryDirectory() as extra_repo:
             with open(os.path.join(main_repo, "clean.tf"), "w") as f:
@@ -152,4 +153,6 @@ def test_verify_dismissed_even_with_extra_paths():
                 [finding], "test", main_repo,
                 extra_search_paths=[extra_repo],
             )
-            assert len(verified) == 0  # dismissed
+            assert len(verified) == 1  # kept
+            assert "Confirmed" not in verified[0].message
+            assert verified[0].severity == Severity.MEDIUM  # not elevated

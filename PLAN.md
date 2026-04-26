@@ -405,7 +405,9 @@ Check that every new AWS resource has a cost_center tag...
 
 **Works with cross-repo.** When `cross_repo` is enabled, the tools search cloned repos too. The LLM doesn't need to know they're separate repos — grep returns results from all search paths. Same loop, wider scope.
 
-**Verify becomes optional.** For `context: repo` skills, the LLM already explored the codebase. The post-judgment grep verify step is redundant in most cases. We keep it as a lightweight safety net but it's no longer load-bearing.
+**Mechanical grep verify goes away.** The current post-judgment grep step (no matches = dismiss finding) is fundamentally flawed. It can only confirm *presence* of broken callers — it cannot confirm *absence* of a required entry. A skill that correctly flags "this registration is missing" gets dismissed because grep finds nothing. This isn't theoretical — it silently killed a correct finding from `skill_hygiene` in PR #7 while `change_completeness` caught the same issue only because it used a different search strategy (searching for `_BUILTIN_SKILLS` instead of `APIBreakingChangeSkill`).
+
+In the agentic mode, the LLM uses `grep` as a tool and interprets results with judgment. "No matches for X in runner.py" means "X is missing — that's the bug." The mechanical verify step is replaced by the LLM's own evidence gathering. For `context: diff` skills, findings are reported as-is — they're judgment calls from the diff alone, not claims that need grep confirmation.
 
 #### Cross-repo search as a skill property
 

@@ -168,7 +168,11 @@ def _verify(
             matches.extend(extra_matches)
 
         if not matches:
-            continue  # no callers found — dismiss
+            # No grep matches — but don't dismiss. The finding may be about
+            # absence (e.g. "this should be registered but isn't"). Report
+            # as-is without elevation.
+            verified.append(f)
+            continue
 
         file_list = "\n".join(f"  - {m}" for m in matches)
         f.message = (
