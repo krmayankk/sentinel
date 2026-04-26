@@ -198,7 +198,7 @@ mode:
 
 **What it controls:** The runner. Not what skills look for (that's CLAUDE.md), but which skills run on which files and what happens when they find something.
 
-**Cross-repo search is a skill property, not a separate skill.** Any skill can opt into cross-repo verification via `cross_repo` in its config. When enabled, the runner checks out the specified repos and includes them in the grep verification scope. This is expensive (clone time, API tokens) so it's off by default and explicitly enabled per-skill by the repo owner. Long-term, the LLM can deduce which repos to check from imports and dependencies — no manual config needed.
+**Cross-repo search is a skill property, not a separate skill.** Any skill can opt into cross-repo search via `cross_repo` in its config. When enabled, the runner checks out the specified repos and adds them to the tool search paths. This is expensive (clone time, API tokens) so it's off by default and explicitly enabled per-skill by the repo owner. Long-term, the LLM can deduce which repos to check from imports and dependencies — no manual config needed.
 
 ### Layer 3: `.sentinel/skills/` — define entirely new judgment checks
 
@@ -222,7 +222,7 @@ critical — they break all existing clients silently.
 
 **Who uses it:** Senior engineers, architects. Define domain-specific judgment that is unique to your system — not generic enough for a built-in skill, too important to leave to memory.
 
-**What it controls:** What sentinel checks for. New skills, not new rules for existing skills (that's CLAUDE.md). Each file is a self-contained judgment check that the framework loads, runs, and reports independently. Custom skills use the same execution pipeline as built-in skills (prompt → LLM → parse findings → grep verify) — the only difference is where the prompt lives.
+**What it controls:** What sentinel checks for. New skills, not new rules for existing skills (that's CLAUDE.md). Each file is a self-contained judgment check that the framework loads, runs, and reports independently. Custom skills use the same agentic pipeline as built-in skills — the only difference is where the prompt lives. Custom skills default to `max_turns: 3` (light exploration) and support YAML frontmatter to configure the budget.
 
 ### How the layers compose
 
@@ -279,15 +279,14 @@ Sentinel reasons across files. It understands that a change to a module interfac
 
 **What shipped:**
 - `ChangeCompletenessSkill`: cross-file impact reasoning — changed A, did you update B?
-- Two-step LLM+grep verification: LLM identifies the search term; grep confirms real callers. Findings dismissed when no callers found — no speculation.
 - `CLAUDE.md` reader: injected into the skill's prompt as high-priority context. Teams write their rules in plain English; sentinel enforces them on every PR.
-- GitHub Action (BYOK), posts severity-grouped comment with confirmed caller locations
+- GitHub Action (BYOK), posts severity-grouped comment with caller locations
 - Self-review: sentinel runs on its own PRs. The review history is part of the demo.
 - `fail_on` env var — empty by default (warning-only); set to `high,critical` to block merge
 
 **Works on:** any repo, any language. The reasoning is about relationships between files, not syntax.
 
-**What this proved:** The LLM+grep two-step eliminates speculation. Judgment-level review is possible with a single API call plus codebase verification. CLAUDE.md as a customization surface works — freeform English beats a DSL. Later upgraded to agentic context gathering (v0.3) — skills that need it can explore the repo with tools before judging.
+**What this proved:** Judgment-level review is possible with a single LLM call. CLAUDE.md as a customization surface works — freeform English beats a DSL. Later upgraded to agentic context gathering (v0.3) — skills that need it can explore the repo with tools before judging.
 
 ---
 
@@ -379,9 +378,9 @@ The diff alone is not enough for skills that reason about dependencies. If you r
 **Per-skill config:**
 ```yaml
 skills:
-  - change_completeness:        # context: repo is the default for this built-in
+  - change_completeness:        # max_turns: 5 (explores callers, registrations)
       max_turns: 5
-  - workflow_security            # context: diff (default, zero extra cost)
+  - workflow_security            # max_turns: 0 (diff-only, zero extra cost)
   - migration_safety
 ```
 
@@ -393,11 +392,12 @@ skills:
 **Custom skills opt in via frontmatter:**
 ```markdown
 ---
-context: repo
-max_turns: 3
+max_turns: 5
 ---
 Check that every new AWS resource has a cost_center tag...
 ```
+
+Without frontmatter, custom skills default to `max_turns: 3` (light exploration).
 
 **Language-agnostic.** The LLM understands Go imports, Python modules, Terraform variables, YAML references, proto schemas — any language. No per-language patterns to maintain. The tools are file operations; the intelligence is in the model.
 
@@ -405,11 +405,11 @@ Check that every new AWS resource has a cost_center tag...
 
 **Mechanical grep verify goes away.** The current post-judgment grep step (no matches = dismiss finding) is fundamentally flawed. It can only confirm *presence* of broken callers — it cannot confirm *absence* of a required entry. A skill that correctly flags "this registration is missing" gets dismissed because grep finds nothing. This isn't theoretical — it silently killed a correct finding from `skill_hygiene` in PR #7 while `change_completeness` caught the same issue only because it used a different search strategy (searching for `_BUILTIN_SKILLS` instead of `APIBreakingChangeSkill`).
 
-In the agentic mode, the LLM uses `grep` as a tool and interprets results with judgment. "No matches for X in runner.py" means "X is missing — that's the bug." The mechanical verify step is replaced by the LLM's own evidence gathering. For `context: diff` skills, findings are reported as-is — they're judgment calls from the diff alone, not claims that need grep confirmation.
+In the agentic loop, the LLM uses `grep` as a tool and interprets results with judgment. "No matches for X in runner.py" means "X is missing — that's the bug." The mechanical verify step is replaced by the LLM's own evidence gathering. For `max_turns: 0` skills, findings are reported as-is — they're judgment calls from the diff alone.
 
 #### Cross-repo search as a skill property
 
-Cross-repo is not a skill — it's an optional capability any skill can use. When a skill has `cross_repo` configured in `sentinel.yml`, the runner checks out those repos and includes them in the verification scope. The same LLM+grep two-step, wider search surface.
+Cross-repo is not a skill — it's an optional capability any skill can use. When a skill has `cross_repo` configured in `sentinel.yml`, the runner checks out those repos and includes them in the tool search paths. Same agentic loop, wider scope — `grep` and `read_file` see files across all repos.
 
 ```yaml
 # sentinel.yml
@@ -505,7 +505,7 @@ Sentinel can fix it. It creates a branch, applies the change, opens a draft PR. 
 **The problem.** A team wants to add a custom skill but doesn't know what makes a good one. They write a vague prompt, get noisy findings, and turn it off. The gap between "I know what reviewers keep catching" and "I have a working sentinel skill" is too wide.
 
 **What ships:**
-- `sentinel init-skill` CLI: interactive scaffolding that produces a well-structured `.sentinel/skills/*.md` file. Encodes the anatomy of a good skill: what to check, severity criteria, positive/negative examples, grep verification hints.
+- `sentinel init-skill` CLI: interactive scaffolding that produces a well-structured `.sentinel/skills/*.md` file. Encodes the anatomy of a good skill: what to check, severity criteria, positive/negative examples, tool-use examples.
 - Skill template with inline guidance — the generated file teaches the author what each section does
 - `sentinel validate-skill`: dry-run a custom skill against a sample diff, shows what findings it would produce before committing
 - **Auto-suggested skills from PR history**: sentinel analyzes merged PRs and reviewer comments (from v0.5 feedback data), identifies recurring patterns ("reviewers flagged missing changelog entries 12 times in 60 days"), and proposes a draft skill. The human reviews, edits, and commits — sentinel doesn't self-create skills.
