@@ -1,0 +1,14 @@
+diff --git a/proto/order.proto b/proto/order.proto
+index 1a2b3c4..5d6e7f8 100644
+--- a/proto/order.proto
++++ b/proto/order.proto
+@@ -5,7 +5,8 @@ message Order {
+   string id = 1;
+   string customer_id = 2;
+   repeated Item items = 3;
+-  string status = 4;
++  OrderStatus status = 4;
++  string tracking_id = 5;
+ }
+
+ message Item {

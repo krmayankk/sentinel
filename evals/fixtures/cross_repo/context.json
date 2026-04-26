@@ -1,0 +1,8 @@
+{
+  "description": "Proto schema field type changed from string to enum and new field added. A downstream service in a separate repo consumes this proto and references the old string type. Cross-repo search should catch the incomplete update.",
+  "repo": "example-org/order-service",
+  "pr_number": 88,
+  "instructions": "",
+  "cross_repo": ["example-org/shipping-service"],
+  "note": "The shipping-service repo (cross-repo) has code that uses order.status as a string. Changing it to an enum type requires updating the downstream consumer. Sentinel must flag this gap using cross-repo search."
+}

@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package order;
+
+message Order {
+  string id = 1;
+  string customer_id = 2;
+  repeated Item items = 3;
+  OrderStatus status = 4;
+  string tracking_id = 5;
+}
+
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  ORDER_STATUS_PENDING = 1;
+  ORDER_STATUS_SHIPPED = 2;
+  ORDER_STATUS_DELIVERED = 3;
+}
+
+message Item {
+  string sku = 1;
+  int32 quantity = 2;
+}
