@@ -2,11 +2,21 @@
 
 A team writes .sentinel/skills/cost_attribution.md in their repo.
 This module wraps that prompt into a Skill that the runner executes
-through the same LLM+grep pipeline as built-in skills.
+through the same agentic pipeline as built-in skills.
+
+Custom skills support optional YAML frontmatter for configuration:
+
+    ---
+    max_turns: 3
+    ---
+    Check that every new AWS resource has a cost_center tag...
+
+Without frontmatter, custom skills default to max_turns=3 (light exploration).
 """
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 from sentinel.core import Context
@@ -18,16 +28,20 @@ You are a code reviewer checking a pull request diff.
 ## Your judgment check
 {skill_prompt}
 
+You have access to tools to explore the codebase. Use them to verify your \
+hypotheses — grep for references, read files to check registrations or \
+configurations, list directories to confirm expected files exist. Base your \
+findings on evidence from the actual codebase, not speculation.
+
 {custom_rules_section}\
 ## Diff
 {diff}
 
 ## Instructions
+- Use the available tools to verify before reporting.
 - Only report gaps that will cause a concrete, demonstrable problem.
-- If a dependent file is not in this diff and you suspect it should be, set \
-`search_for` to the exact string that would appear in any affected caller or \
-consumer — the search will be run against the actual codebase to confirm.
-- Reference exact file paths and line numbers visible in the diff.
+- Include evidence from the codebase in your findings.
+- Reference exact file paths and line numbers.
 - Return findings ordered by severity, most severe first.
 
 """ + _RESPONSE_FORMAT
@@ -39,11 +53,40 @@ _CUSTOM_RULES_SECTION = """\
 """
 
 
+def _parse_frontmatter(text: str) -> tuple[dict, str]:
+    """Extract YAML frontmatter from a markdown file.
+
+    Returns (config_dict, remaining_text).
+    If no frontmatter, returns ({}, original_text).
+    """
+    match = re.match(r"^---\s*\n(.*?)\n---\s*\n", text, re.DOTALL)
+    if not match:
+        return {}, text
+
+    frontmatter = match.group(1)
+    body = text[match.end():]
+    config: dict = {}
+    for line in frontmatter.splitlines():
+        line = line.strip()
+        if ":" in line and not line.startswith("#"):
+            key, _, value = line.partition(":")
+            value = value.strip()
+            # Parse simple types
+            if value.isdigit():
+                config[key.strip()] = int(value)
+            elif value.lower() in ("true", "false"):
+                config[key.strip()] = value.lower() == "true"
+            else:
+                config[key.strip()] = value
+    return config, body
+
+
 class CustomSkill(LLMSkill):
     """A skill defined by a markdown prompt file."""
 
-    def __init__(self, name: str, prompt_text: str, model: str = "claude-sonnet-4-6") -> None:
-        super().__init__(model=model)
+    def __init__(self, name: str, prompt_text: str, model: str = "claude-sonnet-4-6",
+                 max_turns: int = 3) -> None:
+        super().__init__(model=model, max_turns=max_turns)
         self.name = name
         self._prompt_text = prompt_text
 
@@ -68,9 +111,13 @@ def load_custom_skills(repo_path: str, model: str = "claude-sonnet-4-6") -> list
 
     skills = []
     for path in sorted(Path(skills_dir).glob("*.md")):
+        raw_text = path.read_text().strip()
+        if not raw_text:
+            continue
+        config, prompt_text = _parse_frontmatter(raw_text)
         name = path.stem  # cost_attribution.md → cost_attribution
-        prompt_text = path.read_text().strip()
-        if prompt_text:
-            skills.append(CustomSkill(name=name, prompt_text=prompt_text, model=model))
+        max_turns = config.get("max_turns", 3)
+        skills.append(CustomSkill(name=name, prompt_text=prompt_text, model=model,
+                                  max_turns=max_turns))
 
     return skills

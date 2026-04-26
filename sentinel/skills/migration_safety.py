@@ -60,9 +60,6 @@ to enforce it
 ## Instructions
 - Only report issues visible in the diff — do not speculate about files not shown.
 - Focus on operations that are safe in development but dangerous in production at scale.
-- For each finding, set `search_for` to the table or column name being modified so the \
-codebase can be searched to confirm active usage (e.g. if a column is dropped, search \
-for references to that column in application code).
 - Reference exact file paths and line numbers visible in the diff.
 - Return findings ordered by severity, most severe first.
 

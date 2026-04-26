@@ -10,7 +10,13 @@ Your job: identify changes that are incomplete — where the author changed X bu
 did not update Y, creating a gap that will cause a build failure, runtime error, \
 data inconsistency, or operational incident.
 
+You have access to tools to explore the codebase. Use them to verify your \
+hypotheses — grep for callers of changed functions, read files to check \
+registrations, list directories to confirm test files exist. Base your \
+findings on evidence from the actual codebase, not speculation.
+
 ## Severity guide
+- critical: will cause data loss, security vulnerability, or production outage
 - high: will cause a build failure, deployment error, or runtime crash
 - medium: degraded or broken functionality that is not immediately fatal
 - low: inconsistency that should be fixed but has no immediate consequence
@@ -18,26 +24,24 @@ data inconsistency, or operational incident.
 ## What to check
 
 **Interface completeness**
-- Function or method signature changed → are all call sites in this diff updated?
-- Public symbol renamed or removed → are all references updated?
+- Function or method signature changed → use grep to find all call sites. Are they updated?
+- Public symbol renamed or removed → grep for the old name. Any remaining references?
 - Struct or class field added or removed → are constructors and usages consistent?
 
 **Configuration completeness**
-- Terraform variable added, removed, or renamed → are all module callers updated?
-- Required environment variable added → is it referenced in deployment configs, \
-Helm values, and documentation?
-- Configuration key renamed or removed → are all consumers updated?
+- Terraform variable added, removed, or renamed → grep for the variable name across envs/
+- Required environment variable added → is it referenced in deployment configs?
+- Configuration key renamed or removed → grep for the old key name
 
 **Schema completeness**
 - Database column added, removed, or renamed → are the ORM model, migration, \
 rollback migration, and application references all consistent?
-- Proto, Thrift, or Avro schema changed → is the generated client code \
-regenerated and included in this diff?
+- Proto, Thrift, or Avro schema changed → is the generated client code updated?
 - OpenAPI spec changed → are generated clients or integration tests updated?
 
 **Operational completeness**
 - New Kubernetes workload or service introduced → is there a runbook, alert rule, \
-or dashboard config in this diff?
+or dashboard config?
 - New required secret or credential introduced → is it referenced in the secret \
 store config or deployment manifest?
 
@@ -46,11 +50,12 @@ store config or deployment manifest?
 {diff}
 
 ## Instructions
+- Use the available tools to verify before reporting. Grep for symbols, read \
+files to check registrations, list directories to confirm test files exist.
 - Only report gaps that will cause a concrete, demonstrable problem.
-- If a dependent file is not in this diff and you suspect it should be, set \
-`search_for` to the exact string that would appear in any affected caller or \
-consumer — the search will be run against the actual codebase to confirm.
-- Reference exact file paths and line numbers visible in the diff.
+- Include evidence from the codebase in your findings (e.g. "grep found 3 callers \
+of old_name that were not updated").
+- Reference exact file paths and line numbers.
 - Return findings ordered by severity, most severe first.
 
 """ + _RESPONSE_FORMAT
@@ -66,12 +71,13 @@ class ChangeCompletenessSkill(LLMSkill):
     """Checks that a change is complete — consistent across all the places
     that depend on what changed.
 
-    When context.repo_path is set, suspected gaps are verified by searching
-    the actual codebase. Findings are only reported when callers are confirmed
-    to exist, eliminating speculation.
+    Uses agentic tool-use loop: the LLM explores the codebase with grep,
+    read_file, and list_files to verify its hypotheses. Findings are based
+    on evidence from the actual code, not speculation.
     """
 
     name = "change_completeness"
+    max_turns = 5
 
     def _build_prompt(self, diff: str, context: Context) -> str:
         custom_rules_section = ""

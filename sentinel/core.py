@@ -21,7 +21,7 @@ class Finding:
     suggestion: str
     file: str = ""
     line: int = 0
-    search_for: str = ""   # term to grep for in the repo; empty means no verification needed
+    search_for: str = ""   # deprecated — kept for backward compatibility with existing tests
 
 
 @dataclass

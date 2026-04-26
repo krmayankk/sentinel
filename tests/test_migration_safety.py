@@ -80,7 +80,6 @@ def test_parse_critical_finding():
     findings = skill._parse(raw)
     assert len(findings) == 1
     assert findings[0].severity == Severity.CRITICAL
-    assert findings[0].search_for == "orders"
 
 
 def test_parse_mixed_severities():
