@@ -284,11 +284,13 @@ class LLMSkill(Skill):
         """Tool-use loop. The LLM explores the repo and returns findings."""
         messages = [{"role": "user", "content": prompt}]
         turns_used = 0
+        # Agentic calls need more room for reasoning + tool results + final JSON
+        agentic_max_tokens = max(self._max_tokens, 8192)
 
         while turns_used <= self.max_turns:
             response = self._client.messages.create(
                 model=self._model,
-                max_tokens=self._max_tokens,
+                max_tokens=agentic_max_tokens,
                 messages=messages,
                 tools=_TOOLS,
             )
@@ -317,7 +319,7 @@ class LLMSkill(Skill):
                 if turns_used >= self.max_turns:
                     response = self._client.messages.create(
                         model=self._model,
-                        max_tokens=self._max_tokens,
+                        max_tokens=agentic_max_tokens,
                         messages=messages,
                     )
                     return self._parse(self._extract_text(response))
@@ -334,7 +336,11 @@ class LLMSkill(Skill):
         for block in response.content:
             if hasattr(block, "text"):
                 parts.append(block.text)
-        return "\n".join(parts)
+        raw = "\n".join(parts)
+        # If we can't extract JSON, log what we got for debugging
+        if not _extract_json(raw):
+            print(f"sentinel: [{self.name}] raw model response ({len(raw)} chars): {raw[:500]}")
+        return raw
 
     def _parse(self, raw: str) -> list[Finding]:
         data = _extract_json(raw)
