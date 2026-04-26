@@ -158,23 +158,23 @@ _MAX_GREP_RESULTS = 30
 _MAX_FILE_SIZE = 15000  # chars
 
 
-def _execute_tool(
+def execute_tool(
     tool_name: str,
     tool_input: dict,
     search_paths: list[str],
 ) -> str:
     """Execute a tool call against the repo and return the result as a string."""
     if tool_name == "grep":
-        return _tool_grep(tool_input["pattern"], tool_input.get("path", "."), search_paths)
+        return tool_grep(tool_input["pattern"], tool_input.get("path", "."), search_paths)
     elif tool_name == "read_file":
-        return _tool_read_file(tool_input["path"], search_paths)
+        return tool_read_file(tool_input["path"], search_paths)
     elif tool_name == "list_files":
-        return _tool_list_files(tool_input.get("path", "."), search_paths)
+        return tool_list_files(tool_input.get("path", "."), search_paths)
     else:
         return f"Unknown tool: {tool_name}"
 
 
-def _tool_grep(pattern: str, path: str, search_paths: list[str]) -> str:
+def tool_grep(pattern: str, path: str, search_paths: list[str]) -> str:
     """Grep across all search paths."""
     all_matches: list[str] = []
     for repo_path in search_paths:
@@ -199,7 +199,7 @@ def _tool_grep(pattern: str, path: str, search_paths: list[str]) -> str:
     return "\n".join(all_matches)
 
 
-def _tool_read_file(path: str, search_paths: list[str]) -> str:
+def tool_read_file(path: str, search_paths: list[str]) -> str:
     """Read a file from the first search path where it exists."""
     for repo_path in search_paths:
         full_path = os.path.join(repo_path, path)
@@ -214,7 +214,7 @@ def _tool_read_file(path: str, search_paths: list[str]) -> str:
     return f"File not found: {path}"
 
 
-def _tool_list_files(path: str, search_paths: list[str]) -> str:
+def tool_list_files(path: str, search_paths: list[str]) -> str:
     """List files in a directory across search paths."""
     all_entries: list[str] = []
     for repo_path in search_paths:
@@ -303,7 +303,7 @@ class LLMSkill(Skill):
 
                 for block in response.content:
                     if block.type == "tool_use":
-                        result = _execute_tool(block.name, block.input, search_paths)
+                        result = execute_tool(block.name, block.input, search_paths)
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": block.id,

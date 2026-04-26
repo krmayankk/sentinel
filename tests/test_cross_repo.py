@@ -6,7 +6,7 @@ import tempfile
 from unittest.mock import patch
 
 from sentinel.cross_repo import checkout_repos, cleanup_repos
-from sentinel.skills.base import _tool_grep, _tool_read_file, _tool_list_files
+from sentinel.skills.base import tool_grep, tool_read_file, tool_list_files
 
 
 # -- checkout_repos unit tests (no real clones) --
@@ -57,12 +57,12 @@ def test_checkout_repos_reuses_existing_dir():
         assert paths[0] == repo_dir
 
 
-def test_checkout_repos_uses_token_in_url():
-    """When token is provided, it's embedded in the clone URL."""
-    clone_urls = []
+def test_checkout_repos_uses_askpass_for_token():
+    """When token is provided, GIT_ASKPASS is used instead of embedding in URL."""
+    captured_env = {}
 
     def capture_clone(args, **kwargs):
-        clone_urls.append(args[-2])  # the URL argument (second to last, before repo_dir)
+        captured_env.update(kwargs.get("env", {}))
         repo_dir = args[-1]
         os.makedirs(repo_dir, exist_ok=True)
         return subprocess.CompletedProcess(args, 0, "", "")
@@ -71,8 +71,11 @@ def test_checkout_repos_uses_token_in_url():
         with patch("sentinel.cross_repo.subprocess.run", side_effect=capture_clone):
             checkout_repos(["org/repo-a"], token="ghp_test123", workspace=workspace)
 
-    assert len(clone_urls) == 1
-    assert "x-access-token:ghp_test123@" in clone_urls[0]
+    # Token must NOT be in the URL
+    assert "ghp_test123" not in captured_env.get("GIT_ASKPASS", "")
+    # GIT_ASKPASS script must be set
+    assert "GIT_ASKPASS" in captured_env
+    assert captured_env["GIT_TERMINAL_PROMPT"] == "0"
 
 
 def test_cleanup_repos_removes_dirs():
@@ -97,7 +100,7 @@ def test_grep_across_local_and_cross_repo():
             with open(os.path.join(remote, "shared.py"), "w") as f:
                 f.write("def process_order(order_id): ...\n")
 
-            result = _tool_grep("process_order", ".", [local, remote])
+            result = tool_grep("process_order", ".", [local, remote])
             assert "service.py" in result
             assert "shared.py" in result
 
@@ -110,7 +113,7 @@ def test_read_file_falls_through_to_cross_repo():
             with open(os.path.join(remote, "proto/order.proto"), "w") as f:
                 f.write("message Order { string id = 1; }\n")
 
-            result = _tool_read_file("proto/order.proto", [local, remote])
+            result = tool_read_file("proto/order.proto", [local, remote])
             assert "message Order" in result
 
 
@@ -123,6 +126,6 @@ def test_list_files_merges_across_repos():
             with open(os.path.join(remote, "remote.py"), "w") as f:
                 f.write("")
 
-            result = _tool_list_files(".", [local, remote])
+            result = tool_list_files(".", [local, remote])
             assert "local.py" in result
             assert "remote.py" in result
