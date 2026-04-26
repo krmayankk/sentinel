@@ -1,0 +1,12 @@
+{
+  "must_find": [
+    {
+      "skill": "change_completeness",
+      "severity_min": "medium",
+      "title_contains": ["status", "order", "consumer", "downstream", "type", "proto"],
+      "rationale": "Changing a proto field type from string to enum breaks downstream consumers that assume string. Cross-repo search should find the shipping-service reference and flag the incomplete change."
+    }
+  ],
+  "must_not_find": [],
+  "verdict": "incomplete"
+}
