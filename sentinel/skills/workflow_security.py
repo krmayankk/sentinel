@@ -50,9 +50,6 @@ mention this but keep severity low since Dependabot already covers version pinni
 - Only report issues visible in the diff — do not speculate about files not shown.
 - Focus on the interaction between trigger, checkout, permissions, and secrets — \
 this is what pattern matchers cannot do.
-- For each finding, set `search_for` to a distinctive string from the dangerous pattern \
-(e.g. `pull_request_target`, `permissions:`, the action reference) so the codebase can \
-be searched to confirm the pattern exists in the actual workflow files.
 - Reference exact file paths and line numbers visible in the diff.
 - Return findings ordered by severity, most severe first.
 

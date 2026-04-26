@@ -54,31 +54,29 @@ Context Assembly
     |
     v
 Skill Execution (per sentinel.yml routing)
-  |-- Two context modes, controlled per-skill:
+  |-- Every skill is an agentic loop. The diff is the first input.
+  |-- The LLM can explore the codebase with tools: grep, read_file, list_files.
+  |-- max_turns is the only control — it sets the tool-use budget per skill.
   |
-  |-- context: diff (default) — single LLM call, no tools, zero extra cost
-  |     The diff is the whole story. Skill reasons about what it sees.
-  |     Used by: workflow_security, migration_safety
+  |-- max_turns: 0  → diff-only, single LLM call, no tools, zero extra cost
+  |-- max_turns: 3  → light exploration (grep for callers, read a file or two)
+  |-- max_turns: 10 → deep analysis (follow dependency chains across files)
   |
-  |-- context: repo — tool-use loop with budget
-  |     The LLM explores the codebase to understand impact.
-  |     Tools available: grep, read_file, list_files (read-only)
-  |     max_turns controls depth/cost — same implementation, different budget.
-  |     max_turns: 2 ≈ cheap scan (one grep, read results)
-  |     max_turns: 10 ≈ deep analysis (follow dependency chains)
-  |     Used by: change_completeness, custom skills that opt in
-  |     Cross-repo: when enabled, tools search cloned repos too — same loop.
+  |-- The LLM decides whether to use tools based on what it sees in the diff.
+  |     If confident from the diff alone, it returns findings immediately.
+  |     If uncertain, it greps, reads files, then returns findings backed by evidence.
   |
-  |-- ChangeCompletenessSkill      <- context: repo (explores callers)
-  |-- WorkflowSecuritySkill        <- context: diff (YAML is self-contained)
-  |-- MigrationSafetySkill         <- context: diff (SQL is self-contained)
-  |-- [.sentinel/skills/*.md]      <- opt-in via frontmatter `context: repo`
+  |-- ChangeCompletenessSkill      <- max_turns: 5 (explores callers)
+  |-- WorkflowSecuritySkill        <- max_turns: 0 (YAML is self-contained)
+  |-- MigrationSafetySkill         <- max_turns: 0 (SQL is self-contained)
+  |-- [.sentinel/skills/*.md]      <- max_turns: 3 default, configurable via frontmatter
+  |
   |-- Language-agnostic: the LLM knows what to grep for in any language.
   |     No regex, no parser, no per-language patterns to maintain.
+  |-- Cross-repo: when enabled, tools search cloned repos too — same loop.
   |
-  |-- Budget examples:
-  |     on_push: { max_turns: 2 }    — fast, cheap, every commit
-  |     on_merge: { max_turns: 10 }  — thorough, final gate only
+  |-- No mechanical verify step. The LLM is the verifier — it greps, reads,
+  |     and reports with evidence. No findings are silently dismissed.
     |
     v
 Output -> GitHub

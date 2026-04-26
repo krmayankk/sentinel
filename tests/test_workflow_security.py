@@ -79,7 +79,6 @@ def test_parse_valid_response():
     assert len(findings) == 1
     assert findings[0].severity == Severity.CRITICAL
     assert findings[0].title == "Privilege escalation via pull_request_target"
-    assert findings[0].search_for == "pull_request_target"
 
 
 def test_parse_no_findings():

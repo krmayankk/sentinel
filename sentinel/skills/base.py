@@ -1,8 +1,21 @@
-"""Shared LLM+grep verification pipeline used by all skills."""
+"""Shared agentic skill pipeline used by all skills.
+
+Every skill is an agent. The diff is the first input. The LLM can explore
+the codebase with tools (grep, read_file, list_files) before producing
+findings. max_turns controls how deep the exploration goes:
+
+  max_turns=0  → diff-only, single LLM call, no tools
+  max_turns=3  → light exploration (one grep, read a couple of files)
+  max_turns=10 → deep analysis (follow dependency chains)
+
+The LLM decides whether to use tools based on what it sees in the diff.
+If it's confident from the diff alone, it returns findings immediately.
+"""
 from __future__ import annotations
 
 import abc
 import json
+import os
 import re
 import subprocess
 
@@ -58,13 +71,12 @@ Return valid JSON only — no prose, no markdown fences:
 {
   "findings": [
     {
-      "severity": "high|medium|low",
+      "severity": "high|medium|low|critical",
       "title": "short descriptive title",
-      "message": "what is missing and why it matters, with exact file paths from the diff",
+      "message": "what is missing and why it matters, with exact file paths",
       "suggestion": "concrete step to resolve this",
       "file": "path/to/the/changed/file",
-      "line": 0,
-      "search_for": "exact string to grep for in the repo, or empty string if not applicable"
+      "line": 0
     }
   ],
   "summary": "one sentence — what was found or confirmed complete"
@@ -77,41 +89,252 @@ _EXCLUDE_DIRS = [
     ".sentinel-action",
 ]
 
+# -- Tool definitions for the agentic loop --
+
+_TOOLS = [
+    {
+        "name": "grep",
+        "description": (
+            "Search for a string or pattern in the repository. "
+            "Returns matching lines with file paths and line numbers. "
+            "Use this to find callers, references, registrations, or any code "
+            "that depends on what changed in the diff."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "The string or pattern to search for",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Subdirectory to search in (relative to repo root). Default: search entire repo.",
+                    "default": ".",
+                },
+            },
+            "required": ["pattern"],
+        },
+    },
+    {
+        "name": "read_file",
+        "description": (
+            "Read the contents of a file in the repository. "
+            "Use this to see full context around a grep match, check if something "
+            "is registered, or read a config file."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path relative to repo root",
+                },
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "list_files",
+        "description": (
+            "List files in a directory. Use this to check if a file exists "
+            "(e.g. a test file, a fixture directory, a config file)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Directory path relative to repo root. Default: repo root.",
+                    "default": ".",
+                },
+            },
+            "required": ["path"],
+        },
+    },
+]
+
+_MAX_GREP_RESULTS = 30
+_MAX_FILE_SIZE = 15000  # chars
+
+
+def _execute_tool(
+    tool_name: str,
+    tool_input: dict,
+    search_paths: list[str],
+) -> str:
+    """Execute a tool call against the repo and return the result as a string."""
+    if tool_name == "grep":
+        return _tool_grep(tool_input["pattern"], tool_input.get("path", "."), search_paths)
+    elif tool_name == "read_file":
+        return _tool_read_file(tool_input["path"], search_paths)
+    elif tool_name == "list_files":
+        return _tool_list_files(tool_input.get("path", "."), search_paths)
+    else:
+        return f"Unknown tool: {tool_name}"
+
+
+def _tool_grep(pattern: str, path: str, search_paths: list[str]) -> str:
+    """Grep across all search paths."""
+    all_matches: list[str] = []
+    for repo_path in search_paths:
+        search_dir = os.path.join(repo_path, path) if path != "." else repo_path
+        if not os.path.isdir(search_dir):
+            continue
+        exclude_args = [f"--exclude-dir={d}" for d in _EXCLUDE_DIRS]
+        result = subprocess.run(
+            ["grep", "-rn", *exclude_args, pattern, "."],
+            cwd=search_dir,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if line.strip():
+                    all_matches.append(line.lstrip("./"))
+    if not all_matches:
+        return f"No matches found for '{pattern}'"
+    if len(all_matches) > _MAX_GREP_RESULTS:
+        return "\n".join(all_matches[:_MAX_GREP_RESULTS]) + f"\n... ({len(all_matches) - _MAX_GREP_RESULTS} more matches)"
+    return "\n".join(all_matches)
+
+
+def _tool_read_file(path: str, search_paths: list[str]) -> str:
+    """Read a file from the first search path where it exists."""
+    for repo_path in search_paths:
+        full_path = os.path.join(repo_path, path)
+        if os.path.isfile(full_path):
+            try:
+                content = open(full_path).read()
+                if len(content) > _MAX_FILE_SIZE:
+                    return content[:_MAX_FILE_SIZE] + f"\n... (truncated, {len(content)} chars total)"
+                return content
+            except Exception as e:
+                return f"Error reading {path}: {e}"
+    return f"File not found: {path}"
+
+
+def _tool_list_files(path: str, search_paths: list[str]) -> str:
+    """List files in a directory across search paths."""
+    all_entries: list[str] = []
+    for repo_path in search_paths:
+        full_path = os.path.join(repo_path, path) if path != "." else repo_path
+        if os.path.isdir(full_path):
+            for entry in sorted(os.listdir(full_path)):
+                entry_path = os.path.join(full_path, entry)
+                suffix = "/" if os.path.isdir(entry_path) else ""
+                if entry not in _EXCLUDE_DIRS:
+                    all_entries.append(f"{entry}{suffix}")
+    if not all_entries:
+        return f"Directory not found or empty: {path}"
+    return "\n".join(all_entries)
+
 
 class LLMSkill(Skill):
-    """Base class for skills that use the LLM → parse → grep verify pipeline.
+    """Base class for all skills. Every skill is an agentic loop.
 
-    Subclasses implement _build_prompt(). Everything else is shared.
+    The diff is the first input. The LLM can call grep, read_file, and
+    list_files to explore the codebase. max_turns controls how many
+    tool-use rounds are allowed. The LLM decides whether to use tools
+    based on what it sees in the diff.
+
+    Subclasses implement _build_prompt() to define what the skill checks for.
     """
 
-    def __init__(self, model: str = "claude-sonnet-4-6", max_tokens: int = 4096) -> None:
+    # Default max_turns. Override in subclass or config.
+    max_turns: int = 0
+
+    def __init__(self, model: str = "claude-sonnet-4-6", max_tokens: int = 4096, max_turns: int | None = None) -> None:
         self._client = anthropic.Anthropic()
         self._model = model
         self._max_tokens = max_tokens
+        if max_turns is not None:
+            self.max_turns = max_turns
 
     @abc.abstractmethod
     def _build_prompt(self, diff: str, context: Context) -> str: ...
 
     def run(self, diff: str, context: Context) -> list[Finding]:
         prompt = self._build_prompt(diff, context)
-        raw = self._call_llm(prompt)
-        findings = self._parse(raw)
 
+        # Build search paths for tools
+        search_paths: list[str] = []
         if context.repo_path:
-            findings = _verify(
-                findings, self.name, context.repo_path,
-                diff=diff, extra_search_paths=context.extra_search_paths,
-            )
+            search_paths.append(context.repo_path)
+        search_paths.extend(context.extra_search_paths)
 
-        return findings
+        # No repo access or max_turns=0: single call, no tools
+        if not search_paths or self.max_turns <= 0:
+            raw = self._call_llm_simple(prompt)
+            return self._parse(raw)
 
-    def _call_llm(self, prompt: str) -> str:
+        # Agentic loop with tools
+        return self._run_agentic(prompt, search_paths)
+
+    def _call_llm_simple(self, prompt: str) -> str:
+        """Single LLM call without tools."""
         response = self._client.messages.create(
             model=self._model,
             max_tokens=self._max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
         return response.content[0].text
+
+    def _run_agentic(self, prompt: str, search_paths: list[str]) -> list[Finding]:
+        """Tool-use loop. The LLM explores the repo and returns findings."""
+        messages = [{"role": "user", "content": prompt}]
+        turns_used = 0
+
+        while turns_used <= self.max_turns:
+            response = self._client.messages.create(
+                model=self._model,
+                max_tokens=self._max_tokens,
+                messages=messages,
+                tools=_TOOLS,
+            )
+
+            # Check if the model wants to use tools
+            if response.stop_reason == "tool_use":
+                # Process all tool calls in this response
+                tool_results = []
+                assistant_content = response.content  # preserve full assistant message
+
+                for block in response.content:
+                    if block.type == "tool_use":
+                        result = _execute_tool(block.name, block.input, search_paths)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": result,
+                        })
+                        turns_used += 1
+
+                # Add assistant message and tool results to conversation
+                messages.append({"role": "assistant", "content": assistant_content})
+                messages.append({"role": "user", "content": tool_results})
+
+                # If we've hit the budget, force a final response without tools
+                if turns_used >= self.max_turns:
+                    response = self._client.messages.create(
+                        model=self._model,
+                        max_tokens=self._max_tokens,
+                        messages=messages,
+                    )
+                    return self._parse(self._extract_text(response))
+            else:
+                # Model returned text (findings) — done
+                return self._parse(self._extract_text(response))
+
+        # Should not reach here, but safety fallback
+        return []
+
+    def _extract_text(self, response) -> str:
+        """Extract text content from a response that may contain mixed blocks."""
+        parts = []
+        for block in response.content:
+            if hasattr(block, "text"):
+                parts.append(block.text)
+        return "\n".join(parts)
 
     def _parse(self, raw: str) -> list[Finding]:
         data = _extract_json(raw)
@@ -138,84 +361,9 @@ class LLMSkill(Skill):
                         suggestion=item["suggestion"],
                         file=item.get("file", ""),
                         line=item.get("line", 0),
-                        search_for=item.get("search_for", ""),
                     )
                 )
             except (KeyError, ValueError):
                 continue
 
         return findings
-
-
-def _verify(
-    findings: list[Finding], skill_name: str, repo_path: str,
-    diff: str = "", extra_search_paths: list[str] | None = None,
-) -> list[Finding]:
-    """For each finding with a search term, grep the repo to confirm or dismiss."""
-    changed_files = _changed_files(diff)
-    verified: list[Finding] = []
-
-    for f in findings:
-        if not f.search_for:
-            verified.append(f)
-            continue
-
-        matches = _grep(f.search_for, repo_path, exclude_files=changed_files)
-
-        # Search extra repos (cross-repo verification)
-        for extra_path in (extra_search_paths or []):
-            extra_matches = _grep(f.search_for, extra_path)
-            matches.extend(extra_matches)
-
-        if not matches:
-            # No grep matches — but don't dismiss. The finding may be about
-            # absence (e.g. "this should be registered but isn't"). Report
-            # as-is without elevation.
-            verified.append(f)
-            continue
-
-        file_list = "\n".join(f"  - {m}" for m in matches)
-        f.message = (
-            f"{f.message}\n\n"
-            f"Confirmed: found {len(matches)} caller(s) in the codebase "
-            f"that will break:\n{file_list}"
-        )
-        if f.severity not in (Severity.CRITICAL, Severity.HIGH):
-            f.severity = Severity.HIGH
-
-        verified.append(f)
-
-    return verified
-
-
-def _grep(term: str, repo_path: str, exclude_files: set[str] | None = None) -> list[str]:
-    exclude_args = [f"--exclude-dir={d}" for d in _EXCLUDE_DIRS]
-    result = subprocess.run(
-        ["grep", "-rn", *exclude_args, term, "."],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode not in (0, 1):
-        return []
-
-    matches = []
-    for line in result.stdout.splitlines():
-        if not line.strip():
-            continue
-        file_path = line.split(":")[0].lstrip("./")
-        if exclude_files and file_path in exclude_files:
-            continue
-        matches.append(line)
-
-    return matches
-
-
-def _changed_files(diff: str) -> set[str]:
-    changed: set[str] = set()
-    for line in diff.splitlines():
-        if line.startswith("diff --git"):
-            parts = line.split(" ")
-            if len(parts) >= 4:
-                changed.add(parts[-1].lstrip("b/"))
-    return changed
