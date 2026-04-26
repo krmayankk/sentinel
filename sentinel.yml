@@ -1,5 +1,7 @@
 skills:
-  - change_completeness
+  - change_completeness:
+      cross_repo:
+        - krmayankk/hellotest
   - workflow_security
 
 fail_on: []
