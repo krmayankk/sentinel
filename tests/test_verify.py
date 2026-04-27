@@ -91,3 +91,31 @@ def test_execute_tool_dispatch():
 def test_execute_tool_unknown():
     result = execute_tool("delete_file", {"path": "x"}, ["/tmp"])
     assert "Unknown tool" in result
+
+
+# -- Path traversal sandboxing tests --
+
+def test_read_file_rejects_path_traversal():
+    with tempfile.TemporaryDirectory() as d:
+        # Create a file inside the sandbox
+        with open(os.path.join(d, "safe.py"), "w") as f:
+            f.write("SAFE = True\n")
+        # Attempt to escape via ../
+        result = tool_read_file("../../../etc/passwd", [d])
+        assert "not found" in result.lower()
+
+
+def test_grep_rejects_path_traversal():
+    with tempfile.TemporaryDirectory() as d:
+        with open(os.path.join(d, "safe.py"), "w") as f:
+            f.write("hello\n")
+        # Attempt to grep outside the sandbox
+        result = tool_grep("hello", "../../../etc", [d])
+        assert "No matches found" in result
+
+
+def test_list_files_rejects_path_traversal():
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(os.path.join(d, "subdir"))
+        result = tool_list_files("../../../etc", [d])
+        assert "not found" in result.lower() or "empty" in result.lower()
