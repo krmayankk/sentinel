@@ -1,6 +1,8 @@
 """Tests for the agentic tool functions used by LLMSkill."""
 import os
+import subprocess
 import tempfile
+from unittest.mock import patch
 
 from sentinel.skills.base import tool_grep, tool_read_file, tool_list_files, execute_tool
 
@@ -119,3 +121,13 @@ def test_list_files_rejects_path_traversal():
         os.makedirs(os.path.join(d, "subdir"))
         result = tool_list_files("../../../etc", [d])
         assert "not found" in result.lower() or "empty" in result.lower()
+
+
+def test_grep_timeout_returns_message():
+    with tempfile.TemporaryDirectory() as d:
+        with open(os.path.join(d, "file.py"), "w") as f:
+            f.write("hello\n")
+        with patch("sentinel.skills.base.subprocess.run",
+                    side_effect=subprocess.TimeoutExpired(cmd="grep", timeout=10)):
+            result = tool_grep("hello", ".", [d])
+        assert "timed out" in result

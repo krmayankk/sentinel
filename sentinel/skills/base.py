@@ -156,6 +156,7 @@ _TOOLS = [
 
 _MAX_GREP_RESULTS = 30
 _MAX_FILE_SIZE = 15000  # chars
+_TOOL_TIMEOUT = 10  # seconds — prevents hanging on pathological patterns
 
 
 def _safe_resolve(root: str, relative_path: str) -> str | None:
@@ -194,12 +195,16 @@ def tool_grep(pattern: str, path: str, search_paths: list[str]) -> str:
         if search_dir is None or not os.path.isdir(search_dir):
             continue
         exclude_args = [f"--exclude-dir={d}" for d in _EXCLUDE_DIRS]
-        result = subprocess.run(
-            ["grep", "-rn", *exclude_args, pattern, "."],
-            cwd=search_dir,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                ["grep", "-rn", *exclude_args, pattern, "."],
+                cwd=search_dir,
+                capture_output=True,
+                text=True,
+                timeout=_TOOL_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            return f"Search for '{pattern}' timed out after {_TOOL_TIMEOUT}s"
         if result.returncode == 0:
             for line in result.stdout.splitlines():
                 if line.strip():
