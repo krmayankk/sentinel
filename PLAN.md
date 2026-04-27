@@ -183,7 +183,7 @@ skills:
 routing:
   - pattern: "terraform/**"
     skills: [change_completeness]
-    fail_on: [critical, high, medium]   # stricter for IaC
+    # fail_on: [critical, high, medium]   # per-route fail_on — planned, not yet implemented
   - pattern: ".github/workflows/**"
     skills: [workflow_security]
   - pattern: "migrations/**"
@@ -297,7 +297,7 @@ Sentinel reasons across files. It understands that a change to a module interfac
 **What ships:**
 - **Skill runner**: reads `sentinel.yml`, discovers built-in + custom skills, runs them in parallel, aggregates findings tagged by skill name
 - **Per-skill GHA output**: annotations say `[ChangeCompleteness] HIGH: ...` not just `sentinel: ...`. PR comment groups findings by skill. Teams can see which judgment checks passed and which failed.
-- **`sentinel.yml` support**: `skills` list, `fail_on` (global and per-skill), `routing` (file pattern -> skill mapping)
+- **`sentinel.yml` support**: `skills` list, `fail_on` (global), `routing` (file pattern -> built-in skill mapping). Per-skill and per-route `fail_on` are planned but not yet implemented.
 - **`.sentinel/skills/` loader**: custom skill prompt files in the target repo are loaded and executed as first-class skills. A team adds a file, the next PR runs it — no fork, no redeployment.
 - This repo ships its own `sentinel.yml` — the self-referential demo shows the framework in action.
 
@@ -318,11 +318,25 @@ GHA output:
 
 ---
 
-### v0.3 — High-value judgment skills + cross-repo as a skill property
+### v0.3 — High-value judgment skills + cross-repo as a skill property (shipped)
 
 **The thesis.** Everyone has an LLM. The vertical value is in how many useful judgments you encode. v0.3 ships the first batch of built-in skills that catch real incidents — each one represents a class of production failure that no existing tool prevents. It also introduces cross-repo search as an opt-in property of any skill, not a separate skill.
 
-**Skills that ship:**
+**What shipped:**
+- WorkflowSecuritySkill, MigrationSafetySkill (built-in skills)
+- Agentic tool-use loop (grep, read_file, list_files) with per-skill max_turns budget
+- Cross-repo checkout and search as a skill property
+- Mode filtering (on_push vs on_merge)
+- Path sandboxing, tool timeouts, per-skill exception isolation
+- Custom skill frontmatter for max_turns
+
+**Not yet implemented (planned):**
+- Per-skill max_turns override via sentinel.yml config
+- Per-route fail_on thresholds
+- Per-skill fail_on thresholds
+- Org-level config layer (mandatory skills, policy floor)
+
+**Skills:**
 
 #### WorkflowSecuritySkill
 
@@ -375,12 +389,15 @@ The diff alone is not enough for skills that reason about dependencies. If you r
    Or: max_turns hit → forced to return findings with what it has
 ```
 
-**Per-skill config:**
+**Per-skill config (planned — not yet wired through sentinel.yml):**
+
+Each built-in skill has a hardcoded default `max_turns` (e.g. change_completeness=5, workflow_security=0). Custom skills set it via frontmatter. Overriding via sentinel.yml is planned:
 ```yaml
+# planned — not yet implemented
 skills:
-  - change_completeness:        # max_turns: 5 (explores callers, registrations)
+  - change_completeness:
       max_turns: 5
-  - workflow_security            # max_turns: 0 (diff-only, zero extra cost)
+  - workflow_security             # max_turns: 0 (diff-only, zero extra cost)
   - migration_safety
 ```
 
