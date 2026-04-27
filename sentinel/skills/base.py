@@ -156,6 +156,19 @@ _TOOLS = [
 
 _MAX_GREP_RESULTS = 30
 _MAX_FILE_SIZE = 15000  # chars
+_TOOL_TIMEOUT = 10  # seconds — prevents hanging on pathological patterns
+
+
+def _safe_resolve(root: str, relative_path: str) -> str | None:
+    """Resolve a relative path against a root and verify it stays inside.
+
+    Returns the resolved absolute path, or None if the path escapes the root.
+    """
+    resolved = os.path.realpath(os.path.join(root, relative_path))
+    root_resolved = os.path.realpath(root)
+    if not resolved.startswith(root_resolved + os.sep) and resolved != root_resolved:
+        return None
+    return resolved
 
 
 def execute_tool(
@@ -178,16 +191,20 @@ def tool_grep(pattern: str, path: str, search_paths: list[str]) -> str:
     """Grep across all search paths."""
     all_matches: list[str] = []
     for repo_path in search_paths:
-        search_dir = os.path.join(repo_path, path) if path != "." else repo_path
-        if not os.path.isdir(search_dir):
+        search_dir = _safe_resolve(repo_path, path) if path != "." else repo_path
+        if search_dir is None or not os.path.isdir(search_dir):
             continue
         exclude_args = [f"--exclude-dir={d}" for d in _EXCLUDE_DIRS]
-        result = subprocess.run(
-            ["grep", "-rn", *exclude_args, pattern, "."],
-            cwd=search_dir,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                ["grep", "-rn", *exclude_args, pattern, "."],
+                cwd=search_dir,
+                capture_output=True,
+                text=True,
+                timeout=_TOOL_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            return f"Search for '{pattern}' timed out after {_TOOL_TIMEOUT}s"
         if result.returncode == 0:
             for line in result.stdout.splitlines():
                 if line.strip():
@@ -202,7 +219,9 @@ def tool_grep(pattern: str, path: str, search_paths: list[str]) -> str:
 def tool_read_file(path: str, search_paths: list[str]) -> str:
     """Read a file from the first search path where it exists."""
     for repo_path in search_paths:
-        full_path = os.path.join(repo_path, path)
+        full_path = _safe_resolve(repo_path, path)
+        if full_path is None:
+            continue
         if os.path.isfile(full_path):
             try:
                 content = open(full_path).read()
@@ -218,13 +237,14 @@ def tool_list_files(path: str, search_paths: list[str]) -> str:
     """List files in a directory across search paths."""
     all_entries: list[str] = []
     for repo_path in search_paths:
-        full_path = os.path.join(repo_path, path) if path != "." else repo_path
-        if os.path.isdir(full_path):
-            for entry in sorted(os.listdir(full_path)):
-                entry_path = os.path.join(full_path, entry)
-                suffix = "/" if os.path.isdir(entry_path) else ""
-                if entry not in _EXCLUDE_DIRS:
-                    all_entries.append(f"{entry}{suffix}")
+        full_path = _safe_resolve(repo_path, path) if path != "." else repo_path
+        if full_path is None or not os.path.isdir(full_path):
+            continue
+        for entry in sorted(os.listdir(full_path)):
+            entry_path = os.path.join(full_path, entry)
+            suffix = "/" if os.path.isdir(entry_path) else ""
+            if entry not in _EXCLUDE_DIRS:
+                all_entries.append(f"{entry}{suffix}")
     if not all_entries:
         return f"Directory not found or empty: {path}"
     return "\n".join(all_entries)

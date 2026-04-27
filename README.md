@@ -67,7 +67,7 @@ Sentinel ships with skills that catch real incident classes no existing tool pre
 | `workflow_security` | GHA `pull_request_target` + head checkout = privilege escalation. Missing `permissions:` block. Secrets exposed to untrusted code. | critical |
 | `migration_safety` | `CREATE INDEX` without `CONCURRENTLY` locks writes for minutes. `DROP COLUMN` on a table the app still queries. | high/critical |
 
-Each skill is a prompt that teaches the LLM what to reason about, plugged into the same pipeline: prompt → LLM → parse findings → grep verify.
+Each skill is an agentic loop: the LLM receives the diff, explores the codebase with tools (grep, read_file, list_files), and returns findings backed by evidence.
 
 ---
 
@@ -91,7 +91,7 @@ routing:
     skills: [migration_safety]
 ```
 
-**Routing** maps file patterns to skills. When a PR only changes workflow files, only `workflow_security` runs — saves API tokens and eliminates noise. Files that don't match any route fall back to the full skills list. Routing works the same for built-in and custom skills.
+**Routing** maps file patterns to built-in skills. When a PR only changes workflow files, only `workflow_security` runs — saves API tokens and eliminates noise. Files that don't match any route fall back to the full skills list. Custom skills always run — they're opt-in by definition (you added the file), so routing does not filter them.
 
 ---
 
@@ -121,12 +121,17 @@ sentinel review --diff my.patch --repo-path . --env .env
 
 ---
 
-## How the verification works
+## How skills work
 
-Sentinel uses a two-step approach to eliminate speculation:
+Every skill is an agentic loop with a tool-use budget (`max_turns`):
 
-1. **LLM analysis** — the diff is sent to Claude. The model identifies what changed, reasons about what depends on it, and returns candidate findings with a `search_for` term for each gap it suspects.
+1. **The LLM receives the diff** and decides what to investigate.
+2. **It explores the codebase** using read-only tools: `grep` (search for callers, references), `read_file` (check registrations, configs), `list_files` (confirm test files exist).
+3. **It returns findings backed by evidence** — exact file paths, line numbers, and what it confirmed by reading the code.
 
-2. **Codebase verification** — for each candidate, sentinel greps the actual repository for the search term. Findings confirmed by real matches are reported with exact file paths and line numbers. Findings with no matches are dismissed — the LLM suspected a problem, but the codebase confirms it is clean.
+The `max_turns` setting controls how deep the exploration goes:
+- `max_turns: 0` — diff-only, single LLM call, no tools (e.g. workflow_security: YAML is self-contained)
+- `max_turns: 5` — moderate exploration (e.g. change_completeness: grep for callers, read a few files)
+- `max_turns: 10` — deep analysis (follow dependency chains across files)
 
-A finding is only reported when broken callers are confirmed to exist. No noise.
+Findings are based on what the LLM verified in the actual codebase, not speculation.

@@ -60,6 +60,9 @@ def _run_local(args: argparse.Namespace, model: str, fail_on: set[str], event_ty
     repo_path = args.repo_path or ""
     config = load_config(repo_path)
 
+    # Merge fail_on: env var (action input) takes precedence; fall back to sentinel.yml
+    effective_fail_on = fail_on or set(config.fail_on)
+
     context = Context(
         repo="local",
         pr_number=0,
@@ -71,11 +74,7 @@ def _run_local(args: argparse.Namespace, model: str, fail_on: set[str], event_ty
     all_findings = _flatten(results)
     _print_findings(results, source=args.diff)
 
-    if fail_on:
-        blocking = [f for f in all_findings if f.severity.value in fail_on]
-        if blocking:
-            print(f"\nsentinel: {len(blocking)} finding(s) at blocking severity.")
-            sys.exit(1)
+    _check_blocking(all_findings, effective_fail_on)
 
 
 def _run_gha(model: str, fail_on: set[str], event_type: str = "") -> None:
@@ -87,6 +86,9 @@ def _run_gha(model: str, fail_on: set[str], event_type: str = "") -> None:
     # GITHUB_WORKSPACE is always set in GHA — it's the checked-out repo root.
     repo_path = os.environ.get("GITHUB_WORKSPACE", "")
     config = load_config(repo_path)
+
+    # Merge fail_on: env var (action input) takes precedence; fall back to sentinel.yml
+    effective_fail_on = fail_on or set(config.fail_on)
 
     diff = truncate_diff(filter_noise(_git_diff()))
     if not diff.strip():
@@ -107,11 +109,17 @@ def _run_gha(model: str, fail_on: set[str], event_type: str = "") -> None:
     _emit_gha_annotations(all_findings)
     post_findings(repo, pr_number, results, github_token)
 
-    if fail_on:
-        blocking = [f for f in all_findings if f.severity.value in fail_on]
-        if blocking:
-            print(f"\nsentinel: {len(blocking)} finding(s) at blocking severity. Failing.")
-            sys.exit(1)
+    _check_blocking(all_findings, effective_fail_on)
+
+
+def _check_blocking(findings: list[Finding], fail_on: set[str]) -> None:
+    """Exit with code 1 if any findings match blocking severity levels."""
+    if not fail_on:
+        return
+    blocking = [f for f in findings if f.severity.value in fail_on]
+    if blocking:
+        print(f"\nsentinel: {len(blocking)} finding(s) at blocking severity. Failing.")
+        sys.exit(1)
 
 
 # -- GHA annotations --

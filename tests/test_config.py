@@ -106,6 +106,26 @@ def test_parse_cross_repo_with_repo_key():
     assert config.skill_config("change_completeness").cross_repo == ["org/svc"]
 
 
+def test_parse_max_turns():
+    config = _parse({
+        "skills": [
+            {"change_completeness": {"max_turns": 10}},
+            "workflow_security",
+        ],
+    })
+    assert config.skill_config("change_completeness").max_turns == 10
+    assert config.skill_config("workflow_security").max_turns is None
+
+
+def test_parse_max_turns_not_set():
+    config = _parse({
+        "skills": [
+            {"change_completeness": {"cross_repo": ["org/repo"]}},
+        ],
+    })
+    assert config.skill_config("change_completeness").max_turns is None
+
+
 def test_skill_config_lookup_missing():
     config = _parse({"skills": ["change_completeness"]})
     assert config.skill_config("nonexistent") is None

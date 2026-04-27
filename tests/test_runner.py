@@ -3,7 +3,8 @@ import os
 import tempfile
 
 from sentinel.config import SentinelConfig, SkillConfig, ModeConfig
-from sentinel.runner import _resolve_skills
+from sentinel.core import Context, Finding, Severity, Skill
+from sentinel.runner import _resolve_skills, run_skills
 
 
 def _config(names: list[str], **kwargs) -> SentinelConfig:
@@ -197,8 +198,66 @@ def test_routing_no_routes_runs_all():
     assert names == {"change_completeness", "workflow_security"}
 
 
+def test_max_turns_from_config():
+    """Per-skill max_turns in sentinel.yml is passed to the skill instance."""
+    config = SentinelConfig(
+        skill_configs=[SkillConfig(name="change_completeness", max_turns=10)],
+    )
+    skills = _resolve_skills(config, "", "claude-sonnet-4-6")
+    assert len(skills) == 1
+    assert skills[0].max_turns == 10
+
+
+def test_max_turns_default_when_not_set():
+    """When max_turns is not set in config, skill uses its class default."""
+    config = _config(["change_completeness"])
+    skills = _resolve_skills(config, "", "claude-sonnet-4-6")
+    assert len(skills) == 1
+    assert skills[0].max_turns == 5  # ChangeCompletenessSkill default
+
+
 def test_routing_empty_diff_runs_all():
     config = _routed_config()
     skills = _resolve_skills(config, "", "claude-sonnet-4-6", diff="")
     names = {s.name for s in skills}
     assert names == {"change_completeness", "workflow_security", "migration_safety"}
+
+
+# -- exception isolation tests --
+
+class _CrashingSkill(Skill):
+    name = "crasher"
+    def run(self, diff, context):
+        raise RuntimeError("boom")
+
+
+class _GoodSkill(Skill):
+    name = "good"
+    def run(self, diff, context):
+        return [Finding(skill="good", severity=Severity.LOW,
+                        title="found", message="m", suggestion="s")]
+
+
+def test_failing_skill_does_not_block_others(monkeypatch):
+    """A skill that raises should not prevent other skills from running."""
+    config = _config(["change_completeness"])
+    context = Context(repo="test", pr_number=0)
+
+    # Patch _resolve_skills to return our test skills
+    monkeypatch.setattr(
+        "sentinel.runner._resolve_skills",
+        lambda *a, **kw: [_CrashingSkill(), _GoodSkill()],
+    )
+
+    results = run_skills("fake diff", context, config)
+
+    # Crasher should have an error finding with safe message (no raw exception)
+    assert "crasher" in results
+    assert len(results["crasher"]) == 1
+    assert "exception" in results["crasher"][0].title.lower()
+    assert "boom" not in results["crasher"][0].message  # raw exception not exposed
+
+    # Good skill should have run successfully
+    assert "good" in results
+    assert len(results["good"]) == 1
+    assert results["good"][0].title == "found"

@@ -14,7 +14,7 @@ import os
 import re
 
 from sentinel.config import SentinelConfig
-from sentinel.core import Context, Finding, Skill
+from sentinel.core import Context, Finding, Severity, Skill
 from sentinel.cross_repo import checkout_repos, cleanup_repos
 from sentinel.skills.change_completeness import ChangeCompletenessSkill
 from sentinel.skills.custom import load_custom_skills
@@ -59,7 +59,22 @@ def run_skills(
         results: dict[str, list[Finding]] = {}
         for skill in skills:
             print(f"sentinel: running {skill.name}...")
-            findings = skill.run(diff, context)
+            try:
+                findings = skill.run(diff, context)
+            except Exception as exc:
+                # Log full error to action logs, but only expose safe message in findings
+                # (which are posted to PR comments visible to anyone with repo read access)
+                print(f"sentinel: {skill.name} → error: {exc}")
+                results[skill.name] = [
+                    Finding(
+                        skill=skill.name,
+                        severity=Severity.LOW,
+                        title=f"Skill {skill.name} failed with an exception",
+                        message="The skill raised an unexpected error. See the action logs for details.",
+                        suggestion="Check the action logs for the full traceback.",
+                    )
+                ]
+                continue
             results[skill.name] = findings
             count = len(findings)
             if count:
@@ -144,7 +159,9 @@ def _resolve_skills(
             continue
         cls = _BUILTIN_SKILLS.get(name)
         if cls and name not in seen:
-            skills.append(cls(model=model))
+            sc = config.skill_config(name)
+            max_turns = sc.max_turns if sc else None
+            skills.append(cls(model=model, max_turns=max_turns))
             seen.add(name)
 
     # Custom skills from .sentinel/skills/ in the target repo
