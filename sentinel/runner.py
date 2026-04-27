@@ -14,7 +14,7 @@ import os
 import re
 
 from sentinel.config import SentinelConfig
-from sentinel.core import Context, Finding, Skill
+from sentinel.core import Context, Finding, Severity, Skill
 from sentinel.cross_repo import checkout_repos, cleanup_repos
 from sentinel.skills.change_completeness import ChangeCompletenessSkill
 from sentinel.skills.custom import load_custom_skills
@@ -59,7 +59,20 @@ def run_skills(
         results: dict[str, list[Finding]] = {}
         for skill in skills:
             print(f"sentinel: running {skill.name}...")
-            findings = skill.run(diff, context)
+            try:
+                findings = skill.run(diff, context)
+            except Exception as exc:
+                print(f"sentinel: {skill.name} → error: {exc}")
+                results[skill.name] = [
+                    Finding(
+                        skill=skill.name,
+                        severity=Severity.LOW,
+                        title=f"Skill {skill.name} failed with an exception",
+                        message=str(exc),
+                        suggestion="Check the action logs for the full traceback.",
+                    )
+                ]
+                continue
             results[skill.name] = findings
             count = len(findings)
             if count:
