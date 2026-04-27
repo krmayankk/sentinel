@@ -198,6 +198,24 @@ def test_routing_no_routes_runs_all():
     assert names == {"change_completeness", "workflow_security"}
 
 
+def test_max_turns_from_config():
+    """Per-skill max_turns in sentinel.yml is passed to the skill instance."""
+    config = SentinelConfig(
+        skill_configs=[SkillConfig(name="change_completeness", max_turns=10)],
+    )
+    skills = _resolve_skills(config, "", "claude-sonnet-4-6")
+    assert len(skills) == 1
+    assert skills[0].max_turns == 10
+
+
+def test_max_turns_default_when_not_set():
+    """When max_turns is not set in config, skill uses its class default."""
+    config = _config(["change_completeness"])
+    skills = _resolve_skills(config, "", "claude-sonnet-4-6")
+    assert len(skills) == 1
+    assert skills[0].max_turns == 5  # ChangeCompletenessSkill default
+
+
 def test_routing_empty_diff_runs_all():
     config = _routed_config()
     skills = _resolve_skills(config, "", "claude-sonnet-4-6", diff="")

@@ -17,6 +17,7 @@ class Route:
 class SkillConfig:
     name: str
     cross_repo: list[str] = field(default_factory=list)
+    max_turns: int | None = None  # None = use skill's default
 
 
 @dataclass
@@ -109,7 +110,8 @@ def _parse(raw: dict) -> SentinelConfig:
                 opts = opts or {}
                 cross_repo = [r if isinstance(r, str) else r.get("repo", "") for r in opts.get("cross_repo", [])]
                 cross_repo = [r for r in cross_repo if r]
-                skill_configs.append(SkillConfig(name=name, cross_repo=cross_repo))
+                max_turns = opts.get("max_turns")
+                skill_configs.append(SkillConfig(name=name, cross_repo=cross_repo, max_turns=max_turns))
 
     skill_names = [sc.name for sc in skill_configs]
 

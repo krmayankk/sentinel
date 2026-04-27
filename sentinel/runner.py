@@ -157,7 +157,9 @@ def _resolve_skills(
             continue
         cls = _BUILTIN_SKILLS.get(name)
         if cls and name not in seen:
-            skills.append(cls(model=model))
+            sc = config.skill_config(name)
+            max_turns = sc.max_turns if sc else None
+            skills.append(cls(model=model, max_turns=max_turns))
             seen.add(name)
 
     # Custom skills from .sentinel/skills/ in the target repo
