@@ -62,13 +62,15 @@ def run_skills(
             try:
                 findings = skill.run(diff, context)
             except Exception as exc:
+                # Log full error to action logs, but only expose safe message in findings
+                # (which are posted to PR comments visible to anyone with repo read access)
                 print(f"sentinel: {skill.name} → error: {exc}")
                 results[skill.name] = [
                     Finding(
                         skill=skill.name,
                         severity=Severity.LOW,
                         title=f"Skill {skill.name} failed with an exception",
-                        message=str(exc),
+                        message="The skill raised an unexpected error. See the action logs for details.",
                         suggestion="Check the action logs for the full traceback.",
                     )
                 ]

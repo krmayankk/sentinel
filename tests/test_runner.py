@@ -251,10 +251,11 @@ def test_failing_skill_does_not_block_others(monkeypatch):
 
     results = run_skills("fake diff", context, config)
 
-    # Crasher should have an error finding
+    # Crasher should have an error finding with safe message (no raw exception)
     assert "crasher" in results
     assert len(results["crasher"]) == 1
     assert "exception" in results["crasher"][0].title.lower()
+    assert "boom" not in results["crasher"][0].message  # raw exception not exposed
 
     # Good skill should have run successfully
     assert "good" in results
