@@ -32,6 +32,7 @@ class Context:
     config: dict = field(default_factory=dict)  # sentinel.yml contents
     repo_path: str = ""                         # local path to repo root; enables codebase search
     extra_search_paths: list[str] = field(default_factory=list)  # cross-repo checkout paths for verification
+    search_path_labels: dict[str, str] = field(default_factory=dict)  # path → "owner/repo" label for cross-repo paths
 
 
 class Skill(abc.ABC):

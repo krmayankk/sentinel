@@ -26,7 +26,9 @@ def test_checkout_repos_clones_to_workspace():
             paths = checkout_repos(["org/repo-a", "org/repo-b"], workspace=workspace)
 
         assert len(paths) == 2
-        assert all(os.path.isdir(p) for p in paths)
+        assert all(os.path.isdir(p) for p, _ in paths)
+        assert paths[0][1] == "org/repo-a"
+        assert paths[1][1] == "org/repo-b"
 
 
 def test_checkout_repos_skips_failed_clone():
@@ -54,7 +56,7 @@ def test_checkout_repos_reuses_existing_dir():
             mock_run.assert_not_called()
 
         assert len(paths) == 1
-        assert paths[0] == repo_dir
+        assert paths[0] == (repo_dir, "org/repo-a")
 
 
 def test_checkout_repos_uses_askpass_for_token():
@@ -109,6 +111,22 @@ def test_grep_across_local_and_cross_repo():
             assert "shared.py" in result
 
 
+def test_grep_labels_cross_repo_results():
+    """grep prefixes cross-repo matches with [owner/repo]."""
+    with tempfile.TemporaryDirectory() as local:
+        with tempfile.TemporaryDirectory() as remote:
+            with open(os.path.join(local, "local.py"), "w") as f:
+                f.write("compute_total(price, qty)\n")
+            with open(os.path.join(remote, "consumer.py"), "w") as f:
+                f.write("compute_total(price, qty, tax_rate)\n")
+
+            labels = {remote: "org/consumer"}
+            result = tool_grep("compute_total", ".", [local, remote], labels)
+            # Local results have no prefix
+            assert "local.py:" in result
+            assert "[org/consumer] consumer.py:" in result
+
+
 def test_read_file_falls_through_to_cross_repo():
     """read_file finds a file in the cross-repo path when it's not in the local repo."""
     with tempfile.TemporaryDirectory() as local:
@@ -119,6 +137,19 @@ def test_read_file_falls_through_to_cross_repo():
 
             result = tool_read_file("proto/order.proto", [local, remote])
             assert "message Order" in result
+
+
+def test_read_file_labels_cross_repo_source():
+    """read_file includes [from owner/repo] header for cross-repo files."""
+    with tempfile.TemporaryDirectory() as local:
+        with tempfile.TemporaryDirectory() as remote:
+            with open(os.path.join(remote, "billing.py"), "w") as f:
+                f.write("def bill(): pass\n")
+
+            labels = {remote: "org/consumer"}
+            result = tool_read_file("billing.py", [local, remote], labels)
+            assert "[from org/consumer]" in result
+            assert "def bill(): pass" in result
 
 
 def test_list_files_merges_across_repos():
@@ -132,4 +163,20 @@ def test_list_files_merges_across_repos():
 
             result = tool_list_files(".", [local, remote])
             assert "local.py" in result
+            assert "remote.py" in result
+
+
+def test_list_files_labels_cross_repo_section():
+    """list_files groups cross-repo entries under [owner/repo] header."""
+    with tempfile.TemporaryDirectory() as local:
+        with tempfile.TemporaryDirectory() as remote:
+            with open(os.path.join(local, "local.py"), "w") as f:
+                f.write("")
+            with open(os.path.join(remote, "remote.py"), "w") as f:
+                f.write("")
+
+            labels = {remote: "org/consumer"}
+            result = tool_list_files(".", [local, remote], labels)
+            assert "local.py" in result
+            assert "[org/consumer]" in result
             assert "remote.py" in result
