@@ -51,9 +51,11 @@ def run_skills(
         cross_repo_repos = _collect_cross_repos(config, [s.name for s in skills])
         if cross_repo_repos:
             token = os.environ.get("SENTINEL_CROSS_REPO_TOKEN", os.environ.get("GITHUB_TOKEN", ""))
-            cross_repo_paths = checkout_repos(cross_repo_repos, token=token)
-            if cross_repo_paths:
+            checkout_results = checkout_repos(cross_repo_repos, token=token)
+            if checkout_results:
+                cross_repo_paths = [path for path, _ in checkout_results]
                 context.extra_search_paths = cross_repo_paths
+                context.search_path_labels = {path: repo for path, repo in checkout_results}
                 print(f"sentinel: cross-repo search enabled for {len(cross_repo_paths)} repo(s)")
 
         results: dict[str, list[Finding]] = {}

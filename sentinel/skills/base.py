@@ -75,7 +75,7 @@ Return valid JSON only — no prose, no markdown fences:
       "title": "short descriptive title",
       "message": "what is missing and why it matters, with exact file paths",
       "suggestion": "concrete step to resolve this",
-      "file": "path/to/the/changed/file",
+      "file": "path/to/file (use 'owner/repo:path/to/file' for cross-repo findings)",
       "line": 0
     }
   ],
@@ -175,20 +175,23 @@ def execute_tool(
     tool_name: str,
     tool_input: dict,
     search_paths: list[str],
+    path_labels: dict[str, str] | None = None,
 ) -> str:
     """Execute a tool call against the repo and return the result as a string."""
+    labels = path_labels or {}
     if tool_name == "grep":
-        return tool_grep(tool_input["pattern"], tool_input.get("path", "."), search_paths)
+        return tool_grep(tool_input["pattern"], tool_input.get("path", "."), search_paths, labels)
     elif tool_name == "read_file":
-        return tool_read_file(tool_input["path"], search_paths)
+        return tool_read_file(tool_input["path"], search_paths, labels)
     elif tool_name == "list_files":
-        return tool_list_files(tool_input.get("path", "."), search_paths)
+        return tool_list_files(tool_input.get("path", "."), search_paths, labels)
     else:
         return f"Unknown tool: {tool_name}"
 
 
-def tool_grep(pattern: str, path: str, search_paths: list[str]) -> str:
-    """Grep across all search paths."""
+def tool_grep(pattern: str, path: str, search_paths: list[str], path_labels: dict[str, str] | None = None) -> str:
+    """Grep across all search paths, labeling cross-repo results."""
+    labels = path_labels or {}
     all_matches: list[str] = []
     for repo_path in search_paths:
         search_dir = _safe_resolve(repo_path, path) if path != "." else repo_path
@@ -205,10 +208,12 @@ def tool_grep(pattern: str, path: str, search_paths: list[str]) -> str:
             )
         except subprocess.TimeoutExpired:
             return f"Search for '{pattern}' timed out after {_TOOL_TIMEOUT}s"
+        label = labels.get(repo_path, "")
+        prefix = f"[{label}] " if label else ""
         if result.returncode == 0:
             for line in result.stdout.splitlines():
                 if line.strip():
-                    all_matches.append(line.lstrip("./"))
+                    all_matches.append(prefix + line.lstrip("./"))
     if not all_matches:
         return f"No matches found for '{pattern}'"
     if len(all_matches) > _MAX_GREP_RESULTS:
@@ -216,8 +221,9 @@ def tool_grep(pattern: str, path: str, search_paths: list[str]) -> str:
     return "\n".join(all_matches)
 
 
-def tool_read_file(path: str, search_paths: list[str]) -> str:
+def tool_read_file(path: str, search_paths: list[str], path_labels: dict[str, str] | None = None) -> str:
     """Read a file from the first search path where it exists."""
+    labels = path_labels or {}
     for repo_path in search_paths:
         full_path = _safe_resolve(repo_path, path)
         if full_path is None:
@@ -225,29 +231,39 @@ def tool_read_file(path: str, search_paths: list[str]) -> str:
         if os.path.isfile(full_path):
             try:
                 content = open(full_path).read()
+                label = labels.get(repo_path, "")
+                header = f"[from {label}] {path}\n\n" if label else ""
                 if len(content) > _MAX_FILE_SIZE:
-                    return content[:_MAX_FILE_SIZE] + f"\n... (truncated, {len(content)} chars total)"
-                return content
+                    return header + content[:_MAX_FILE_SIZE] + f"\n... (truncated, {len(content)} chars total)"
+                return header + content
             except Exception as e:
                 return f"Error reading {path}: {e}"
     return f"File not found: {path}"
 
 
-def tool_list_files(path: str, search_paths: list[str]) -> str:
+def tool_list_files(path: str, search_paths: list[str], path_labels: dict[str, str] | None = None) -> str:
     """List files in a directory across search paths."""
-    all_entries: list[str] = []
+    labels = path_labels or {}
+    sections: list[str] = []
     for repo_path in search_paths:
         full_path = _safe_resolve(repo_path, path) if path != "." else repo_path
         if full_path is None or not os.path.isdir(full_path):
             continue
+        entries: list[str] = []
         for entry in sorted(os.listdir(full_path)):
             entry_path = os.path.join(full_path, entry)
             suffix = "/" if os.path.isdir(entry_path) else ""
             if entry not in _EXCLUDE_DIRS:
-                all_entries.append(f"{entry}{suffix}")
-    if not all_entries:
+                entries.append(f"{entry}{suffix}")
+        if entries:
+            label = labels.get(repo_path, "")
+            if label:
+                sections.append(f"[{label}]\n" + "\n".join(entries))
+            else:
+                sections.append("\n".join(entries))
+    if not sections:
         return f"Directory not found or empty: {path}"
-    return "\n".join(all_entries)
+    return "\n\n".join(sections)
 
 
 class LLMSkill(Skill):
@@ -289,7 +305,7 @@ class LLMSkill(Skill):
             return self._parse(raw)
 
         # Agentic loop with tools
-        return self._run_agentic(prompt, search_paths)
+        return self._run_agentic(prompt, search_paths, context.search_path_labels)
 
     def _call_llm_simple(self, prompt: str) -> str:
         """Single LLM call without tools."""
@@ -300,7 +316,7 @@ class LLMSkill(Skill):
         )
         return response.content[0].text
 
-    def _run_agentic(self, prompt: str, search_paths: list[str]) -> list[Finding]:
+    def _run_agentic(self, prompt: str, search_paths: list[str], path_labels: dict[str, str] | None = None) -> list[Finding]:
         """Tool-use loop. The LLM explores the repo and returns findings."""
         messages = [{"role": "user", "content": prompt}]
         turns_used = 0
@@ -323,7 +339,7 @@ class LLMSkill(Skill):
 
                 for block in response.content:
                     if block.type == "tool_use":
-                        result = execute_tool(block.name, block.input, search_paths)
+                        result = execute_tool(block.name, block.input, search_paths, path_labels)
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": block.id,

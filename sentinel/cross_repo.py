@@ -25,8 +25,8 @@ def _write_askpass_script(workspace: str) -> str:
     return script_path
 
 
-def checkout_repos(repos: list[str], token: str = "", workspace: str = "") -> list[str]:
-    """Clone repos (shallow, depth=1) and return local paths.
+def checkout_repos(repos: list[str], token: str = "", workspace: str = "") -> list[tuple[str, str]]:
+    """Clone repos (shallow, depth=1) and return (local_path, repo_name) pairs.
 
     Uses GIT_ASKPASS to pass credentials so tokens don't leak into
     process arguments, git config, or logs.
@@ -37,7 +37,7 @@ def checkout_repos(repos: list[str], token: str = "", workspace: str = "") -> li
         workspace: parent directory for clones; uses a temp dir if empty
 
     Returns:
-        list of local paths to cloned repos
+        list of (local_path, repo_name) tuples
     """
     if not workspace:
         workspace = tempfile.mkdtemp(prefix="sentinel-xrepo-")
@@ -46,12 +46,12 @@ def checkout_repos(repos: list[str], token: str = "", workspace: str = "") -> li
     if token:
         askpass_script = _write_askpass_script(workspace)
 
-    paths = []
+    results: list[tuple[str, str]] = []
     try:
         for repo in repos:
             repo_dir = os.path.join(workspace, repo.replace("/", "_"))
             if os.path.isdir(repo_dir):
-                paths.append(repo_dir)
+                results.append((repo_dir, repo))
                 continue
 
             url = f"https://x-access-token@github.com/{repo}.git"
@@ -66,14 +66,14 @@ def checkout_repos(repos: list[str], token: str = "", workspace: str = "") -> li
                 capture_output=True, text=True, env=env,
             )
             if result.returncode == 0:
-                paths.append(repo_dir)
+                results.append((repo_dir, repo))
             else:
                 print(f"sentinel: warning: failed to clone {repo}: {result.stderr.strip()}")
     finally:
         if askpass_script and os.path.exists(askpass_script):
             os.remove(askpass_script)
 
-    return paths
+    return results
 
 
 def cleanup_repos(paths: list[str]) -> None:
