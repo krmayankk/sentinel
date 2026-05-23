@@ -6,15 +6,29 @@ Sentinel is a framework for AI agents that reason about software changes with ju
 
 The first agents are **reviewers**: passive, read-only, they analyze diffs and produce findings. The architecture supports **actors**: agents that fix what they find, opening draft PRs for human review. The same judgment framework that reviews PRs can eventually manage infrastructure — detect drift, correlate incidents with recent changes, enforce deployment gates — because both require the same capability: reasoning about relationships across a system.
 
-**The progression:**
+### The triggering model is decoupling from the PR
 
-| Phase | What sentinel does | Trust level |
-|---|---|---|
-| Review (v0.1–v0.4) | Reads diffs, reasons about them, produces findings | Read-only. Human decides. |
-| Fix (v0.6) | Creates a branch and opens a draft PR for confirmed findings | Human reviews and merges. Sentinel does not self-merge. |
-| Operate (v1.0+) | Watches for drift, correlates incidents, enforces gates | Human sets policy. Sentinel acts within it. Git is always the interface. |
+Most code review today happens at PR-open. That model is not going away in the next year — but it is fraying at the edges. Merge queues (GitHub native, Graphite, Cursor's pending Graphite integration) move review from before-merge to queue-time. Autonomous coding agents land commits no human authored. Trunk-based teams already gate on tests, not human review. The endpoint of the trajectory is **no PR at all** — code is generated, tests run, gates pass, it lands; if something is wrong, a bug is auto-filed or an autofix branch is opened.
 
-Each phase builds on the one before it. You cannot fix what you cannot judge. You cannot operate what you cannot fix. The milestones below build the judgment layer first, then the action layer.
+Sentinel's design intentionally separates *the skill* (judgment about a diff) from *the trigger* (when judgment runs). A skill that works on a PR works on a push, on a queue entry, on a scheduled drift check, on an autonomous-agent commit. The judgment is reusable across the trigger evolution. This is why the same framework can ship as a PR reviewer today and a pre-merge gate for autonomous agents tomorrow — without rewriting the skills.
+
+### The progression
+
+| Phase | What sentinel does | Trust level | Primary trigger |
+|---|---|---|---|
+| Review (v0.1–v0.3) | Reads diffs, reasons about them, produces findings | Read-only. Human decides. | PR-open |
+| Measure (v0.4) | Quantifies whether the reviewer works | Same | Prompt / model change |
+| Learn (v0.5) | Telemetry + history feed skill context and grow the eval corpus | Same | PR-open + production data |
+| Fix (v0.6) | Opens a draft PR for confirmed findings | Human reviews and merges. Sentinel does not self-merge. | PR-open |
+| Operate (v0.7) | Watches for drift, correlates incidents, gates deploys | Human sets policy. Git is the interface. | Schedule, push, deploy |
+| General (v1.0) | Public library and CLI, second-domain reference, full eval history | Same | All of the above |
+| Autonomous (v1.0+) | Gates code no human wrote and no human reviewed; auto-files bugs or opens autofix branches | Human sets policy and watches metrics. | Merge queue, agent commit |
+
+Each phase builds on the one before it. You cannot fix what you cannot judge. You cannot operate what you cannot fix. You cannot gate autonomous agents until your gate is itself measured. The milestones build the judgment layer first, then measurement, then the action layer, then the operational surface.
+
+### Open-source adoption is a first-class goal
+
+This repo is the reference implementation. The four customization layers (org config, `CLAUDE.md`, `sentinel.yml`, `.sentinel/skills/`) are designed so a team can adopt sentinel without forking it. The eval harness is designed so a team can trust the system without trusting us. The framework is designed so adding a new judgment check is a markdown file, not a code change. If a team outside this org can run sentinel on their repo, get useful findings on day one, and write their own skill on day three — the framework works.
 
 ---
 
@@ -84,6 +98,30 @@ Output -> GitHub
   |-- Summary comment with severity breakdown, per skill
   |-- Check run: pass / warn / block (configurable per skill via sentinel.yml)
 ```
+
+---
+
+## Triggers — the skill is one, the trigger is many
+
+A skill doesn't know which event fired it. The runner extracts a diff and a context; the skill judges. This is the architectural reason the framework extends from PR review today to autonomous-agent gating tomorrow: the trigger evolves, the judgment stays put.
+
+| Trigger | When it fires | What sentinel sees | Status |
+|---|---|---|---|
+| `pull_request` | PR opened or updated | base..head diff | Shipped (v0.1) |
+| `push` | Commit pushed to a branch | previous..HEAD diff | Wired in entrypoint; GHA template pending |
+| `merge_group` | GitHub merge queue evaluates a queued PR | queued diff | Same code path as `pull_request`; just a different GHA event |
+| `schedule` | Cron — diff between last-known-good main and current main | drift diff | Planned (v0.7) |
+| `agent_commit` | A coding agent pushes; gate before merge | agent's diff | Future (v1.0+) — same skill code, new output path (auto-file bug or open autofix branch) |
+
+The two trigger-time controls already in `sentinel.yml`:
+
+```yaml
+mode:
+  on_push: [workflow_security, change_completeness]   # cheap, every push
+  on_merge: [migration_safety]                        # expensive, final gate only
+```
+
+`on_push` is the cheap-and-frequent lane. `on_merge` is the expensive-and-final lane (merge queue, deploy gate, or autonomous-commit gate). Same skills, different budget and stakes. A team adopting sentinel can start with `on_push` only, prove value, then enable the heavier `on_merge` skills when they trust the gate.
 
 ---
 
@@ -457,35 +495,111 @@ mode:
 
 ### v0.4 — Measuring whether it works (evals)
 
-**The problem.** You have been running sentinel for a month. Is it catching real things or generating noise? You changed a prompt and now it flags every `count = 0` resource as a misconfiguration — 40% false positive rate, up from 8%. You do not know this yet.
+> For a worked end-to-end example of how the harness grades a fixture — the LLM step, the deterministic scorer step, and why "deterministic" matters when the LLM is non-deterministic — see [`docs/evals.md`](docs/evals.md). The section below is the strategic rationale; that doc is the concrete walkthrough.
 
-Almost no AI tooling in the wild ships with evals. Sentinel does, and it runs them on every change to its own prompts.
+**The problem.** You ran sentinel for a month. Did it catch real things, or generate noise? You changed a prompt and now it flags every `count = 0` resource — false-positive rate went from 8% to 40%. You don't know yet. The model upgraded from Sonnet 4.6 to Sonnet 4.7; behavior shifted; nobody measured it. Most AI tooling in the wild ships without measurement. Sentinel ships with it — and the measurement story is itself the differentiator that makes the framework adoptable outside our own projects.
 
-**What ships:**
-- Eval harness: `sentinel eval run` against a fixture suite
-- LLM-as-judge with 5-dimension rubric: precision, recall, actionability, context use, tone
-- 15+ curated fixtures covering each skill — realistic scenarios with documented expected verdicts
-- Evals run in CI on every PR to sentinel itself. A prompt change that regresses below threshold fails the check.
-- Prompts are versioned `.md` files. `PROMPT_MANIFEST` tracks which version is active per skill.
+#### The measurement is two layers
+
+**Layer 1 — deterministic check (no LLM in the scoring path).**
+
+For each fixture, the harness runs the configured skills against `diff.patch` and `repo/`, then scores the produced findings against `expected.json` using pure pattern matching:
+
+- For each entry in `must_find`: did sentinel produce a finding from the right *skill*, at or above the expected *severity*, that points at the expected *location* (file path or symbol)? Title text is not graded — only what the finding points at.
+- For each entry in `must_not_find`: did sentinel produce that specific false positive?
+- Did the overall *verdict* (complete / incomplete) match?
+- Report per-fixture pass/fail and aggregate precision and recall.
+
+"Deterministic" means **reproducible without an LLM**: same fixtures + same skill outputs always yield the same scores. There is no judgment in the scoring path. This is the cheap regression net — if a prompt change makes a skill stop firing or fire on the wrong file, the deterministic check turns red. No tokens spent on grading. No randomness. This layer alone catches the gross failure modes (skill silent, skill misfiring, skill verdict flipped) that account for most prompt regressions.
+
+> **Why not grade on title keywords?** The v0.4 sketch originally scored on `title_contains`. That's brittle — a correct finding worded differently fails the test, producing noise on the measurement itself. A finding's value is whether it points the engineer at the actual problem: that's location + severity + skill. Title text is style and gets graded by the LLM judge below, not the deterministic checker.
+
+**Layer 2 — LLM judge (graded by another model, on dimensions the deterministic layer can't measure).**
+
+A separate LLM call grades each finding on:
+
+- **Actionability** — could a reader fix the issue from this finding alone?
+- **Grounding** — is the rationale supported by code that exists in the diff or repo?
+- **Calibration** — is the severity appropriate to the actual blast radius?
+
+The judge gets the diff, the finding, and the expected.json, and returns a score per dimension. **The judge uses a different model family from the generator** — if Sonnet generates the findings, a GPT or Gemini model grades them. Same-family judging is a known anti-pattern: the judge and the generator share blind spots, so the judge passes findings a human would reject.
+
+**The judge is itself measured.** A small human-graded gold set (~20 findings, scored by us) is the ground truth. Each release of the judge prompt is checked against the gold set: if the judge disagrees with the human grader more than X% of the time, the judge prompt is rejected. The judge is part of the system under test, not above it.
+
+#### Output: a quality × cost frontier, not a single pass/fail
+
+The eval report has three measurement axes:
+
+- **Quality** — precision, recall, judge scores per dimension
+- **Tokens** — input + output, per skill, per fixture
+- **Latency** — wall-clock per skill
+
+A prompt change that improves recall by 3% but doubles tokens is not strictly better. The report surfaces the trade. **Cost is not a measured axis** — it's a derived view (tokens × current model price). The underlying measurement is tokens, which doesn't shift when Anthropic re-prices.
+
+#### Fixtures are seeded curated, grown from production (v0.5 closes the loop)
+
+v0.4 ships with ~15 hand-built fixtures derived from the incident classes each skill is meant to catch. The long-term corpus is grown from production telemetry (v0.5): every real sentinel run records its diff, findings, and any user feedback (dismissed / acted on). A pipeline samples *disagreements* — sentinel said critical and a user dismissed it; or a user flagged something sentinel missed — and proposes each as a candidate fixture for human approval. The eval corpus stays representative of what teams actually ship, not just what we thought of when we wrote v0.4.
+
+This is what makes the harness durable rather than a museum of yesterday's bugs. The curated fixtures are the seed; production is the engine.
+
+#### When evals run (not just on prompt change)
+
+- **On skill / prompt change** — required pre-merge gate on this repo
+- **On model upgrade** — full eval before flipping the default model (Sonnet 4.6 → 4.7 must pass)
+- **On runner / context change** — same as prompt change; non-skill code can still move skill behavior
+- **Scheduled drift** — weekly run on a stable corpus and prompt set; if scores wander, something upstream changed silently
+- **On corpus growth** — every new fixture re-scores every skill against it
+
+#### What ships in v0.4
+
+- `sentinel eval run` CLI subcommand — load fixtures, run skills, score, emit report
+- Deterministic checker (Layer 1) — location + severity + verdict grading, no LLM
+- LLM judge (Layer 2) — rubric scoring with a different model family from the generator
+- Judge-meta-eval — gold set of ~20 human-graded findings; the judge prompt is gated against it
+- ~15 curated fixtures covering each built-in skill (current count: 4)
+- Eval report — quality × tokens × latency, per skill, per fixture, with delta-vs-main
+- `PROMPT_MANIFEST` — versioned prompt files; each report binds to a manifest hash
+- CI workflow — runs eval on every PR to sentinel; fails on quality regression
 - Eval report published as a GitHub Actions artifact
 
-**What this proves:** AI systems can be measured, not just shipped. The LLM-as-judge pattern works. Prompt changes need regression tests. This is the chapter most AI projects skip.
+#### What this proves
+
+AI systems are measurable. The two-layer approach — cheap deterministic regression net + nuanced LLM judge graded against humans — is a reproducible pattern any team can adopt. Shipping a tool with evals is the credibility move that lets outside teams trust the framework. The harness is part of the product, not internal scaffolding.
 
 ---
 
-### v0.5 — Context from history
+### v0.5 — Learning from production: telemetry + history
 
-**The problem.** A PR touches `eks/node-groups/main.tf`. Four months ago, PR #891 made a structurally similar change. After merge, nodes entered `NotReady` state due to a missing taint toleration. The incident lasted 47 minutes. The author of today's PR doesn't know this. Their reviewer joined the team last month.
+**Two problems, one feedback loop.**
 
-Sentinel does.
+**Telemetry problem.** v0.4 measures sentinel against fixtures *we* curated. The fixtures may not match what teams actually ship. Without production data we don't know if the eval corpus is representative, which findings users act on, which they dismiss, which PRs got merged despite a sentinel block. The eval is rigorous against itself but unmoored from reality.
 
-**What ships:**
-- GitHub API integration: fetches merged PRs, stores diff summaries and reviewer comments, embeds for semantic retrieval
+**History problem.** A PR touches `eks/node-groups/main.tf`. Four months ago, PR #891 made a structurally similar change. After merge, nodes entered `NotReady` state from a missing taint toleration — 47-minute outage. Today's reviewer joined last month and doesn't know. Sentinel can.
+
+Both problems share the same shape: *make sentinel learn from what already happened in this team's repo.* Telemetry is sentinel's own history (findings produced, dismissed, acted on). History is the team's (merged PRs, incidents). Both feed skill context at review time. Telemetry additionally feeds the v0.4 eval corpus — closing the loop between measurement and reality.
+
+#### What ships
+
+**Telemetry**
+- Every sentinel run emits a structured event: trigger, repo, PR/commit, skills run, findings produced, tokens, latency
+- Findings get a stable ID and a feedback URL (one-click dismiss; one-click "this was useful")
+- Storage backend is BYO — default is a GitHub repo dedicated to telemetry; HTTP endpoint also supported. No Anthropic-side data store; teams own their data.
+- Weekly aggregation: per-skill precision (acted-on / total findings), per-team noise rate, latency distribution
+- **Fixture-proposal pipeline**: samples agreement cases (sentinel critical → user acted) and disagreement cases (sentinel critical → user dismissed; or human flagged something sentinel missed). Each becomes a candidate fixture queued for human review. Approved candidates land in `evals/fixtures/`.
+
+**History (RAG)**
+- GitHub API integration: fetches merged PRs from the last N months; stores diff summaries and reviewer comments
 - Incident linking: GitHub issues labeled `postmortem` or `incident` are stored and retrievable
-- RAG retrieval: top-k semantically similar past PRs and incidents injected as context at review time
-- Human feedback loop: when a developer dismisses a finding, it is stored. Consistently dismissed findings are down-weighted.
+- RAG retrieval: top-k semantically similar past PRs and incidents injected as context when a skill runs
+- Consistently-dismissed finding patterns (via telemetry) are down-weighted in future similar contexts — the system gets quieter without retraining
 
-**What this proves:** RAG in a real application. How to build AI systems that learn from team history without retraining.
+#### Privacy and trust
+
+For sentinel to be adopted outside our own projects, telemetry must be opt-in and self-hosted by default. The reference setup stores events in a private GitHub repo the team controls. No diff or finding text leaves the team's GitHub org unless they explicitly point telemetry at a remote endpoint. This is the same trust posture as the API key model — BYO, locally controlled, no central data plane.
+
+#### What this proves
+
+AI systems learn from their environment without retraining weights. The eval corpus stays current because production feeds it. Skills get sharper because they see what reviewers actually flag and dismiss. The pattern — telemetry → eval growth → prompt refinement — is the loop every serious AI deployment needs and almost none publish openly. Sentinel ships it as part of the framework.
 
 ---
 
@@ -559,6 +673,7 @@ The architecture — skill-based analysis, eval harness, prompt versioning, cros
 | Month 3 | Add cross-repo references in `sentinel.yml` | Changes verified against consumers in other repos |
 | Month 4 | Enable auto-fix for confirmed findings | Mechanical fixes stop requiring human round-trips |
 | Month 6 | Enable scheduled drift detection | Sentinel watches for problems between PRs |
+| Year 1+ | Wire sentinel as the pre-merge gate for an autonomous coding agent | Same skills, new trigger — judgment continues to apply when no human writes the PR |
 
 ---
 
@@ -566,4 +681,4 @@ The architecture — skill-based analysis, eval harness, prompt versioning, cros
 
 Sentinel reviews its own pull requests from v0.1 onward. The PR history is part of the demo — you can read the git log and see sentinel's reviews improving milestone by milestone. The eval harness runs in CI. Prompt regressions fail the build. The quality metrics are tracked and visible.
 
-The goal is not just to ship a useful tool. It is to show, concretely and step by step, how any engineering team can introduce AI judgment into their development process — measurably, incrementally, without replacing what already works. And to show how that same judgment extends from reviewing code to managing the systems it runs on.
+The goal is not just to ship a useful tool. It is to show, concretely and step by step, how any engineering team can introduce AI judgment into their development process — measurably, incrementally, without replacing what already works. And to show how that same judgment extends from reviewing PRs today to gating autonomous coding agents tomorrow: the trigger evolves, the skills don't have to.

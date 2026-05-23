@@ -1,9 +1,12 @@
 """Sentinel entrypoint.
 
-Two modes:
+Three modes:
 
-  Local (development and demo):
+  Local review (development and demo):
     sentinel review --diff <path> --repo-path <path> [--env <path>] [--claude-md <path>]
+
+  Eval (v0.4 deterministic checker):
+    sentinel eval run [--fixtures-dir <path>] [--fixture <name>] [--json] [--env <path>]
 
   GHA (triggered by action.yml):
     All configuration comes from environment variables.
@@ -16,6 +19,7 @@ import argparse
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 from sentinel.config import load_config
 from sentinel.core import Context, Finding, Severity
@@ -35,6 +39,10 @@ def main() -> None:
             _load_env_file(args.env)
         event_type = getattr(args, "event_type", "") or event_type
         _run_local(args, model, fail_on, event_type)
+    elif args.command == "eval":
+        if getattr(args, "env", None):
+            _load_env_file(args.env)
+        _run_eval(args, model, event_type)
     else:
         _run_gha(model, fail_on, event_type)
 
@@ -110,6 +118,44 @@ def _run_gha(model: str, fail_on: set[str], event_type: str = "") -> None:
     post_findings(repo, pr_number, results, github_token)
 
     _check_blocking(all_findings, effective_fail_on)
+
+
+def _run_eval(args: argparse.Namespace, model: str, event_type: str) -> None:
+    """Run fixtures through the deterministic scorer and report.
+
+    Exits non-zero if any fixture fails — designed to gate CI on prompt regressions.
+    """
+    _require_env("ANTHROPIC_API_KEY")
+
+    # Import lazily so `sentinel review` doesn't pay the import cost.
+    from sentinel.evals.report import format_console, to_json
+    from sentinel.evals.runner import discover_fixtures, run_all
+
+    fixtures_dir = Path(args.fixtures_dir)
+    if not fixtures_dir.exists():
+        print(f"sentinel: fixtures directory not found: {fixtures_dir}", file=sys.stderr)
+        sys.exit(2)
+
+    only = [args.fixture] if args.fixture else None
+    if only and not (fixtures_dir / args.fixture).exists():
+        print(f"sentinel: fixture not found: {args.fixture}", file=sys.stderr)
+        sys.exit(2)
+
+    available = [p.name for p in discover_fixtures(fixtures_dir)]
+    if not available:
+        print(f"sentinel: no fixtures found under {fixtures_dir}", file=sys.stderr)
+        sys.exit(2)
+
+    runs = run_all(fixtures_dir, model=model, event_type=event_type, only=only)
+
+    if args.json:
+        print(to_json(runs))
+    else:
+        print(format_console(runs))
+
+    failed = sum(1 for r in runs if not r.score.passed)
+    if failed:
+        sys.exit(1)
 
 
 def _check_blocking(findings: list[Finding], fail_on: set[str]) -> None:
@@ -236,7 +282,23 @@ def _parse_args() -> argparse.Namespace:
     review.add_argument("--env",       metavar="PATH", help="Path to a .env file")
     review.add_argument("--claude-md", metavar="PATH", help="Path to a CLAUDE.md file")
     review.add_argument("--event-type", metavar="TYPE", default="", help="Event type: push, merge, or empty (run all)")
-    return parser.parse_args()
+
+    eval_cmd = sub.add_parser("eval", help="Run skills against fixtures and score deterministically")
+    eval_sub = eval_cmd.add_subparsers(dest="eval_command")
+    run_cmd = eval_sub.add_parser("run", help="Run all fixtures (or one with --fixture)")
+    run_cmd.add_argument("--fixtures-dir", metavar="PATH", default="evals/fixtures",
+                         help="Directory containing fixture subdirectories")
+    run_cmd.add_argument("--fixture", metavar="NAME", default="",
+                         help="Run a single named fixture instead of all")
+    run_cmd.add_argument("--json", action="store_true",
+                         help="Emit JSON report instead of human-readable console output")
+    run_cmd.add_argument("--env", metavar="PATH", help="Path to a .env file")
+    args = parser.parse_args()
+
+    if args.command == "eval" and not getattr(args, "eval_command", None):
+        eval_cmd.print_help()
+        sys.exit(2)
+    return args
 
 
 if __name__ == "__main__":
