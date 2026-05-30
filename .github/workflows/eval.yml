@@ -3,15 +3,20 @@ name: Eval
 # Gates prompt and skill regressions. Runs `sentinel eval run` against the
 # fixture corpus and fails the check if any fixture regresses.
 #
-# Triggered on PRs that touch skill code, the eval harness, runner, or
-# fixtures. Other PRs (docs, tests, config) skip to save API tokens.
+# Triggered on PRs that touch skill code, the eval harness, runner,
+# entrypoint, or fixtures. Other PRs (docs, tests, config) skip to save
+# API tokens.
 #
 # No push: main trigger — every skill-affecting change already runs eval
 # as a PR, so a re-run on merge would add no signal. Periodic drift
 # checks belong on a schedule, not on every push.
 #
-# Permissions are minimal: contents: read. ANTHROPIC_API_KEY is scoped to
-# the single step that needs it, not the whole job.
+# Secret protection: the real guard for fork PRs is the `pull_request`
+# trigger — GitHub does not expose secrets to workflows triggered by
+# forks. Step-level env scoping of ANTHROPIC_API_KEY is defense in
+# depth, not the primary protection. permissions:contents:read is set
+# at both workflow and job level so any future job inherits least
+# privilege by default.
 
 on:
   pull_request:
@@ -22,8 +27,12 @@ on:
       - 'sentinel/runner.py'
       - 'sentinel/core.py'
       - 'sentinel/preprocess.py'
+      - 'entrypoint.py'
       - 'evals/fixtures/**'
       - '.github/workflows/eval.yml'
+
+permissions:
+  contents: read
 
 jobs:
   eval:
