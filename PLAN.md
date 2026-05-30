@@ -497,6 +497,20 @@ mode:
 
 > For a worked end-to-end example of how the harness grades a fixture — the LLM step, the deterministic scorer step, and why "deterministic" matters when the LLM is non-deterministic — see [`docs/evals.md`](docs/evals.md). The section below is the strategic rationale; that doc is the concrete walkthrough.
 
+**Status (2026-05-30):** Layer 1 shipped and gating CI. Layer 2 and the production-feedback loop are open.
+
+| Item | Status |
+|---|---|
+| `sentinel eval run` CLI subcommand | shipped (#14) |
+| Deterministic checker (Layer 1) | shipped (#14) |
+| CI gate on skill/eval/runner changes | shipped (#15) |
+| Curated fixtures | 4 / ~15 (one per built-in skill) |
+| LLM judge (Layer 2) | not started |
+| Judge-meta-eval gold set | not started |
+| `PROMPT_MANIFEST` (prompt versioning) | not started |
+| Quality × tokens × latency report | not started (today: pass/fail only) |
+| Delta-vs-main in report | not started |
+
 **The problem.** You ran sentinel for a month. Did it catch real things, or generate noise? You changed a prompt and now it flags every `count = 0` resource — false-positive rate went from 8% to 40%. You don't know yet. The model upgraded from Sonnet 4.6 to Sonnet 4.7; behavior shifted; nobody measured it. Most AI tooling in the wild ships without measurement. Sentinel ships with it — and the measurement story is itself the differentiator that makes the framework adoptable outside our own projects.
 
 #### The measurement is two layers
@@ -628,6 +642,21 @@ Sentinel can fix it. It creates a branch, applies the change, opens a draft PR. 
 - Deployment gate: sentinel as a required check before deploy, not just before merge — reviews the full set of changes since last deploy
 
 **What this proves:** The review agent framework generalizes to operational use. Same skills, same judgment, different trigger. Git remains the interface — the output is always a PR or a finding, never a direct mutation.
+
+---
+
+### v0.7.5 — Autonomous merge gate
+
+**The problem.** In the autonomous-agent era the PR loop collapses: a coding agent pushes a commit, tests run, and *something* decides whether to merge. Today that "something" is implicit — either a human still reviews, or there is no gate at all. Sentinel already has the judgment layer; what is missing is an explicit policy for autonomous gating and an explicit answer for what happens when sentinel blocks an agent commit (because no human is on the other side of the comment).
+
+**What ships:**
+- **Autonomous-gate policy in `sentinel.yml`:** a single block declaring what constitutes "green" for an agent-pushed commit (tests pass + sentinel verdict + optional judge confidence floor) and what happens on red.
+- **Block-mode choices, configurable per repo:** `file-issue` (open a GitHub issue with the finding and link the commit), `page-human` (post to a configured webhook / on-call), or `handoff-to-autofix` (chain into the v0.6 auto-fix loop).
+- **`agent_commit` trigger wired up:** the trigger table entry stops being aspirational. Same skill code, new output path.
+- **Agent-loop telemetry:** because there is no human on the other end, signal quality matters more. Sentinel emits a per-decision event the operator can audit: what blocked, what passed, what was handed to auto-fix, how long the gate took.
+- **Reference deployment:** documented in `docs/autonomous-gate.md`, with a working example wired into one of the user's own repos (e.g. an AWS inference pipeline) so the pattern is proven end-to-end.
+
+**What this proves:** Sentinel survives the trigger model collapsing from "PR comment loop" to "agents commit and the gate decides." The framework takes the gating decision as a first-class concern rather than leaving every operator to invent it. This is what makes the design durable across the 1–2 year arc to fully autonomous workflows.
 
 ---
 

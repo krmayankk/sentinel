@@ -3,10 +3,12 @@ name: Eval
 # Gates prompt and skill regressions. Runs `sentinel eval run` against the
 # fixture corpus and fails the check if any fixture regresses.
 #
-# Triggered on:
-#   - PRs that touch skill code, the eval harness, runner, or fixtures
-#     (other PRs — docs, tests, config — skip to save API tokens)
-#   - Every push to main (regression net against the merged state)
+# Triggered on PRs that touch skill code, the eval harness, runner, or
+# fixtures. Other PRs (docs, tests, config) skip to save API tokens.
+#
+# No push: main trigger — every skill-affecting change already runs eval
+# as a PR, so a re-run on merge would add no signal. Periodic drift
+# checks belong on a schedule, not on every push.
 #
 # Permissions are minimal: contents: read. ANTHROPIC_API_KEY is scoped to
 # the single step that needs it, not the whole job.
@@ -22,8 +24,6 @@ on:
       - 'sentinel/preprocess.py'
       - 'evals/fixtures/**'
       - '.github/workflows/eval.yml'
-  push:
-    branches: [main]
 
 jobs:
   eval:
