@@ -1,0 +1,48 @@
+name: Eval
+
+# Gates prompt and skill regressions. Runs `sentinel eval run` against the
+# fixture corpus and fails the check if any fixture regresses.
+#
+# Triggered on:
+#   - PRs that touch skill code, the eval harness, runner, or fixtures
+#     (other PRs — docs, tests, config — skip to save API tokens)
+#   - Every push to main (regression net against the merged state)
+#
+# Permissions are minimal: contents: read. ANTHROPIC_API_KEY is scoped to
+# the single step that needs it, not the whole job.
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'sentinel/skills/**'
+      - 'sentinel/evals/**'
+      - 'sentinel/runner.py'
+      - 'sentinel/core.py'
+      - 'sentinel/preprocess.py'
+      - 'evals/fixtures/**'
+      - '.github/workflows/eval.yml'
+  push:
+    branches: [main]
+
+jobs:
+  eval:
+    name: Deterministic eval
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e ".[dev]" || pip install -e .
+      - run: pip install pyyaml
+
+      - name: Run sentinel eval (deterministic scorer)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python entrypoint.py eval run
