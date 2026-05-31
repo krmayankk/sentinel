@@ -8,7 +8,7 @@ Sentinel is not a linter. It does not replace Semgrep, Checkov, Dependabot, or G
 
 - **Skills** — composable analysis units. Each skill takes a diff and context, reasons via LLM, and returns typed findings. Skills are independent: run one or all, add your own.
 - **CLAUDE.md** — teach sentinel your team's conventions in plain English. Injected into every review as high-priority context. No DSL, no redeployment.
-- **Evals** — fixtures with expected verdicts. Quality is measured, not assumed. A prompt change that regresses below threshold fails the build.
+- **Evals** — fixtures with expected verdicts. Quality is measured, not assumed. A prompt change that regresses below threshold fails the build. See [`docs/evals.md`](./docs/evals.md) for the worked example.
 - **Judgment levels** — every finding has a severity. Start non-blocking on day one. Move findings to blocking (`fail_on: [critical]`, then `[critical, high]`) as you validate they are real.
 
 See [PLAN.md](./PLAN.md) for the full architecture and milestone breakdown.
@@ -117,7 +117,14 @@ Add the file, push, and the next PR runs it. No fork, no code change, no redeplo
 git clone https://github.com/krmayankk/sentinel && cd sentinel
 pip install -e .
 sentinel review --diff my.patch --repo-path . --env .env
+
+# Run the eval harness against the fixture corpus
+sentinel eval run                                    # all fixtures
+sentinel eval run --fixture terraform_variable_removed
+sentinel eval run --json                             # machine-readable
 ```
+
+See [`docs/evals.md`](./docs/evals.md) for how the deterministic scorer grades findings and what "deterministic" buys you when the LLM itself is non-deterministic.
 
 ---
 
