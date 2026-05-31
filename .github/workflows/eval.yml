@@ -52,6 +52,11 @@ jobs:
       - run: pip install pyyaml
 
       - name: Run sentinel eval (deterministic scorer)
+        # Explicit fork guard. GitHub already withholds secrets from
+        # fork-triggered pull_request workflows; this `if:` makes the
+        # restriction visible at the step level and avoids an empty-key
+        # failure on a fork PR.
+        if: github.event.pull_request.head.repo.full_name == github.repository
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python entrypoint.py eval run
