@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 
 from sentinel.config import SentinelConfig
 from sentinel.core import Context, Finding, Severity, Skill
@@ -20,6 +21,7 @@ from sentinel.skills.change_completeness import ChangeCompletenessSkill
 from sentinel.skills.custom import load_custom_skills
 from sentinel.skills.migration_safety import MigrationSafetySkill
 from sentinel.skills.workflow_security import WorkflowSecuritySkill
+from sentinel.telemetry import NullSink, Sink, build_skill_run_event, new_session_id
 
 # Registry of built-in skills. New built-in skills are added here.
 _BUILTIN_SKILLS: dict[str, type[Skill]] = {
@@ -35,15 +37,23 @@ def run_skills(
     config: SentinelConfig,
     model: str = "claude-sonnet-4-6",
     event_type: str = "",
+    telemetry: Sink | None = None,
 ) -> dict[str, list[Finding]]:
     """Run all configured skills and return findings grouped by skill name.
 
     Args:
         event_type: "push", "merge", or "" (run all). Controls mode filtering.
+        telemetry: Sink that receives one event per skill run. Defaults
+            to :class:`NullSink` so callers that don't want telemetry
+            pay nothing.
 
     Returns a dict: {"change_completeness": [...], "cost_attribution": [...]}
     """
     skills = _resolve_skills(config, context.repo_path, model, event_type, diff)
+    sink: Sink = telemetry or NullSink()
+    session_id = new_session_id()
+    trigger = event_type or "local"
+    pr_number = context.pr_number or None
 
     # Set up cross-repo search paths for skills that opt in
     cross_repo_paths: list[str] = []
@@ -61,13 +71,16 @@ def run_skills(
         results: dict[str, list[Finding]] = {}
         for skill in skills:
             print(f"sentinel: running {skill.name}...")
+            started = time.monotonic()
+            error_msg: str | None = None
             try:
                 findings = skill.run(diff, context)
             except Exception as exc:
                 # Log full error to action logs, but only expose safe message in findings
                 # (which are posted to PR comments visible to anyone with repo read access)
                 print(f"sentinel: {skill.name} → error: {exc}")
-                results[skill.name] = [
+                error_msg = type(exc).__name__
+                findings = [
                     Finding(
                         skill=skill.name,
                         severity=Severity.LOW,
@@ -76,8 +89,22 @@ def run_skills(
                         suggestion="Check the action logs for the full traceback.",
                     )
                 ]
-                continue
+            duration_s = time.monotonic() - started
             results[skill.name] = findings
+
+            sink.emit(build_skill_run_event(
+                session_id=session_id,
+                trigger=trigger,
+                repo=context.repo,
+                pr_number=pr_number,
+                skill=skill.name,
+                duration_s=duration_s,
+                findings=findings if error_msg is None else [],
+                error=error_msg,
+            ))
+
+            if error_msg is not None:
+                continue
             count = len(findings)
             if count:
                 print(f"sentinel: {skill.name} → {count} finding(s)")

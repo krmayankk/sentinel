@@ -191,3 +191,37 @@ def test_skills_for_mode_empty_returns_all():
 def test_skills_for_mode_no_config_returns_all():
     config = _parse({"skills": ["change_completeness", "migration_safety"]})
     assert config.skills_for_mode("push") == ["change_completeness", "migration_safety"]
+
+
+# -- telemetry config --
+
+def test_telemetry_disabled_by_default():
+    config = _parse({})
+    assert config.telemetry.enabled is False
+    assert config.telemetry.path == ".sentinel/telemetry"
+
+
+def test_telemetry_enabled_with_default_path():
+    config = _parse({"telemetry": {"enabled": True}})
+    assert config.telemetry.enabled is True
+    assert config.telemetry.path == ".sentinel/telemetry"
+
+
+def test_telemetry_custom_path():
+    config = _parse({
+        "telemetry": {"enabled": True, "path": "/var/lib/sentinel/events"},
+    })
+    assert config.telemetry.path == "/var/lib/sentinel/events"
+
+
+def test_telemetry_block_with_only_path_stays_disabled():
+    """Forgetting enabled: true is a no-op; opt-in must be explicit."""
+    config = _parse({"telemetry": {"path": "/tmp/sentinel"}})
+    assert config.telemetry.enabled is False
+
+
+def test_telemetry_null_block_uses_defaults():
+    """telemetry: null in YAML must not crash."""
+    config = _parse({"telemetry": None})
+    assert config.telemetry.enabled is False
+    assert config.telemetry.path == ".sentinel/telemetry"

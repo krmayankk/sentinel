@@ -122,9 +122,12 @@ sentinel review --diff my.patch --repo-path . --env .env
 sentinel eval run                                    # all fixtures
 sentinel eval run --fixture terraform_variable_removed
 sentinel eval run --json                             # machine-readable
+
+# Inspect persisted telemetry (no API key required)
+sentinel telemetry summarize --path .sentinel/telemetry
 ```
 
-See [`docs/evals.md`](./docs/evals.md) for how the deterministic scorer grades findings and what "deterministic" buys you when the LLM itself is non-deterministic.
+See [`docs/evals.md`](./docs/evals.md) for how the deterministic scorer grades findings, and [`docs/telemetry.md`](./docs/telemetry.md) for what telemetry captures and where it gets displayed.
 
 ---
 

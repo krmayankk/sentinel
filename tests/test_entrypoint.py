@@ -1,11 +1,15 @@
 """Tests for entrypoint fail_on merging and blocking logic."""
+import json
+import os
+import sys
+
 import pytest
 
 from sentinel.core import Finding, Severity
-import sys
-import os
+from sentinel.telemetry.events import build_skill_run_event
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from entrypoint import _check_blocking
+from entrypoint import _check_blocking, _gha_run_url, _maybe_write_job_summary
 
 
 def _finding(severity: str) -> Finding:
@@ -60,3 +64,62 @@ def test_fail_on_merge_both_empty():
     config_fail_on: list[str] = []
     effective = env_fail_on or set(config_fail_on)
     assert effective == set()
+
+
+# -- job summary --
+
+def test_job_summary_skipped_when_env_var_unset(monkeypatch):
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    # Should be a no-op — must not raise.
+    _maybe_write_job_summary({"x": []}, [])
+
+
+def test_job_summary_written_when_env_var_set(tmp_path, monkeypatch):
+    target = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(target))
+
+    finding = Finding(skill="change_completeness", severity=Severity.HIGH,
+                       title="missing caller", message="m", suggestion="s",
+                       file="x.tf", line=1)
+    event = build_skill_run_event(
+        session_id="s", trigger="pull_request", repo="r", pr_number=1,
+        skill="change_completeness", duration_s=0.5, findings=[finding],
+    )
+
+    _maybe_write_job_summary({"change_completeness": [finding]}, [event])
+
+    content = target.read_text()
+    assert "## Sentinel review" in content
+    assert "missing caller" in content
+
+
+def test_job_summary_appends_not_overwrites(tmp_path, monkeypatch):
+    target = tmp_path / "summary.md"
+    target.write_text("PRE-EXISTING\n")
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(target))
+
+    _maybe_write_job_summary({"x": []}, [])
+    assert target.read_text().startswith("PRE-EXISTING\n")
+
+
+# -- run url --
+
+def test_gha_run_url_complete(monkeypatch):
+    monkeypatch.setenv("GITHUB_SERVER_URL", "https://github.com")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "acme/api")
+    monkeypatch.setenv("GITHUB_RUN_ID", "12345")
+    assert _gha_run_url() == "https://github.com/acme/api/actions/runs/12345"
+
+
+def test_gha_run_url_missing_returns_none(monkeypatch):
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    assert _gha_run_url() is None
+
+
+def test_gha_run_url_default_server(monkeypatch):
+    """GITHUB_SERVER_URL is missing on some self-hosted setups; default to github.com."""
+    monkeypatch.delenv("GITHUB_SERVER_URL", raising=False)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "acme/api")
+    monkeypatch.setenv("GITHUB_RUN_ID", "12345")
+    assert _gha_run_url() == "https://github.com/acme/api/actions/runs/12345"

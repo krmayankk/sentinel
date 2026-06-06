@@ -50,6 +50,18 @@ Rule-based tools catch known violations. What they cannot do is reason about you
 
 Sentinel does none of these. It does what requires judgment: reasoning about relationships that cross the boundaries these tools cannot see.
 
+## Non-goals
+
+The following are deliberately outside the scope of sentinel. Drawing the boundary keeps the framework focused and lets it slot into larger systems cleanly.
+
+- **Sentinel is not an agent orchestrator.** A multi-agent loop (plan → implement → test → review → merge) is a separate concern with a different shape. Sentinel is the *review* agent in that quartet — one specialized agent with deep judgment, not the conductor. Frameworks like Claude Code, Cursor agents, or a bespoke planner-implementer-critic loop are the right home for orchestration. Sentinel is invoked *by* such a system, or directly by CI.
+- **Sentinel is not an LLM observability platform.** See the v0.5 telemetry layering note — call-level tracing belongs to Phoenix / Langfuse / Helicone / Braintrust, and sentinel emits OTLP spans so those tools work out of the box.
+- **Sentinel is not a linter or static analyzer replacement.** The table above covers the tools sentinel does not duplicate.
+
+## Model portability (architectural commitment)
+
+Skills are model-agnostic by design — the skill prompt is the IP, the model is the runtime. Today the runner is hard-coded to the Anthropic SDK; making that a swappable `LLMProvider` adapter (Anthropic, OpenAI, Bedrock) is a v0.6 commitment, forced by the v0.4 LLM-judge layer (which already requires a *different* model family from the generator). The encoded judgment in each skill is portable across model and provider shifts; only the call site changes. This is what makes the framework durable across the next 1–2 years of model churn.
+
 ---
 
 ## How it works
@@ -600,6 +612,9 @@ Both problems share the same shape: *make sentinel learn from what already happe
 - Storage backend is BYO — default is a GitHub repo dedicated to telemetry; HTTP endpoint also supported. No Anthropic-side data store; teams own their data.
 - Weekly aggregation: per-skill precision (acted-on / total findings), per-team noise rate, latency distribution
 - **Fixture-proposal pipeline**: samples agreement cases (sentinel critical → user acted) and disagreement cases (sentinel critical → user dismissed; or human flagged something sentinel missed). Each becomes a candidate fixture queued for human review. Approved candidates land in `evals/fixtures/`.
+
+**Telemetry layering — Sentinel is not an observability platform.**
+LLM observability (Arize Phoenix, Langfuse, Helicone, Braintrust) traces individual LLM calls — prompts, responses, tokens, latency. Sentinel telemetry sits one layer above: the unit is a *finding* and what the user did with it, not the LLM call. The two are complementary, not competing. Sentinel emits OpenTelemetry-compatible spans so any team already running Phoenix or Langfuse picks up sentinel traces for free — wire the OTLP endpoint and it works. Sentinel does not ship its own trace UI.
 
 **History (RAG)**
 - GitHub API integration: fetches merged PRs from the last N months; stores diff summaries and reviewer comments
