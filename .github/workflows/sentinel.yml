@@ -12,13 +12,13 @@ jobs:
       checks: write          # set check run status
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0     # full history needed for git diff
 
       # Always run sentinel from main so a broken PR branch cannot
       # crash the reviewer before it posts findings.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: main
           path: .sentinel-action
