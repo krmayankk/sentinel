@@ -1,6 +1,6 @@
 """Sentinel entrypoint.
 
-Three modes:
+Four modes:
 
   Local review (development and demo):
     sentinel review --diff <path> --repo-path <path> [--env <path>] [--claude-md <path>]
@@ -8,9 +8,13 @@ Three modes:
   Eval (v0.4 deterministic checker):
     sentinel eval run [--fixtures-dir <path>] [--fixture <name>] [--json] [--env <path>]
 
+  Telemetry (v0.5 — inspect persisted events; no API key):
+    sentinel telemetry summarize [--path <dir>] [--repo-path <dir>]
+
   GHA (triggered by action.yml):
     All configuration comes from environment variables.
-    Findings appear as inline annotations on the PR diff.
+    Findings appear as inline annotations on the PR diff. The Markdown
+    summary is written to $GITHUB_STEP_SUMMARY for the Actions tab.
 """
 
 from __future__ import annotations
@@ -21,11 +25,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-from sentinel.config import load_config
+from sentinel.config import SentinelConfig, load_config
 from sentinel.core import Context, Finding, Severity
 from sentinel.github import post_findings
 from sentinel.preprocess import filter_noise, truncate_diff
 from sentinel.runner import run_skills
+from sentinel.telemetry import (
+    CollectorSink,
+    JSONLSink,
+    NullSink,
+    Sink,
+    TeeSink,
+)
 
 
 def main() -> None:
@@ -43,6 +54,8 @@ def main() -> None:
         if getattr(args, "env", None):
             _load_env_file(args.env)
         _run_eval(args, model, event_type)
+    elif args.command == "telemetry":
+        _run_telemetry(args)
     else:
         _run_gha(model, fail_on, event_type)
 
@@ -78,9 +91,16 @@ def _run_local(args: argparse.Namespace, model: str, fail_on: set[str], event_ty
         repo_path=repo_path,
     )
 
-    results = run_skills(diff, context, config, model=model, event_type=event_type)
+    collector = CollectorSink()
+    sink = TeeSink(collector, _build_telemetry_sink(config, repo_path))
+    results = run_skills(
+        diff, context, config,
+        model=model, event_type=event_type,
+        telemetry=sink,
+    )
     all_findings = _flatten(results)
     _print_findings(results, source=args.diff)
+    _maybe_write_job_summary(results, collector.events)
 
     _check_blocking(all_findings, effective_fail_on)
 
@@ -110,12 +130,19 @@ def _run_gha(model: str, fail_on: set[str], event_type: str = "") -> None:
         repo_path=repo_path,
     )
 
-    results = run_skills(diff, context, config, model=model, event_type=event_type)
+    collector = CollectorSink()
+    sink = TeeSink(collector, _build_telemetry_sink(config, repo_path))
+    results = run_skills(
+        diff, context, config,
+        model=model, event_type=event_type,
+        telemetry=sink,
+    )
     all_findings = _flatten(results)
 
     _print_findings(results, source=f"{repo}#{pr_number}")
     _emit_gha_annotations(all_findings)
-    post_findings(repo, pr_number, results, github_token)
+    _maybe_write_job_summary(results, collector.events)
+    post_findings(repo, pr_number, results, github_token, run_url=_gha_run_url())
 
     _check_blocking(all_findings, effective_fail_on)
 
@@ -156,6 +183,81 @@ def _run_eval(args: argparse.Namespace, model: str, event_type: str) -> None:
     failed = sum(1 for r in runs if not r.score.passed)
     if failed:
         sys.exit(1)
+
+
+def _run_telemetry(args: argparse.Namespace) -> None:
+    """Print an aggregate summary over persisted telemetry events.
+
+    Reads JSONL files from ``--path`` (defaults to the configured
+    sentinel.yml path, or ``.sentinel/telemetry``). No LLM required.
+    """
+    from sentinel.telemetry.load import load_events
+    from sentinel.telemetry.render import render_aggregate
+
+    if args.path:
+        base = Path(args.path)
+    else:
+        config = load_config(args.repo_path or "")
+        base = Path(config.telemetry.path)
+        if not base.is_absolute() and args.repo_path:
+            base = Path(args.repo_path) / base
+
+    events = load_events(base)
+    print(render_aggregate(events))
+
+
+def _maybe_write_job_summary(
+    results: dict[str, list[Finding]],
+    events: list,
+) -> None:
+    """Write the per-run Markdown summary to ``$GITHUB_STEP_SUMMARY`` when set.
+
+    The Actions tab renders this as the Job Summary panel — the
+    cleanest place to show per-skill status with collapsible
+    finding details. No-op when the env var is unset (i.e. running
+    outside GHA, or in a workflow without summary support).
+    """
+    target = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not target:
+        return
+    from sentinel.telemetry.render import render_run_summary
+    md = render_run_summary(results, events)
+    try:
+        with open(target, "a", encoding="utf-8") as f:
+            f.write(md)
+    except OSError as exc:
+        print(f"sentinel: could not write job summary: {exc}", file=sys.stderr)
+
+
+def _gha_run_url() -> str | None:
+    """Build the workflow run URL for cross-linking from the PR comment.
+
+    Returns None when any required env var is missing — leaves the
+    PR comment without a link rather than printing a broken one.
+    """
+    server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    if not repo or not run_id:
+        return None
+    return f"{server}/{repo}/actions/runs/{run_id}"
+
+
+def _build_telemetry_sink(config: SentinelConfig, repo_path: str) -> Sink:
+    """Construct the configured telemetry sink, defaulting to a no-op.
+
+    Path resolution: a relative ``telemetry.path`` is resolved against
+    ``repo_path`` so events land *inside* the team's repo (or whatever
+    directory they pointed sentinel at), not the process cwd — that
+    matters in GHA where the runner cwd may differ from the checkout
+    root.
+    """
+    if not config.telemetry.enabled:
+        return NullSink()
+    p = Path(config.telemetry.path)
+    if not p.is_absolute() and repo_path:
+        p = Path(repo_path) / p
+    return JSONLSink(p)
 
 
 def _check_blocking(findings: list[Finding], fail_on: set[str]) -> None:
@@ -293,10 +395,31 @@ def _parse_args() -> argparse.Namespace:
     run_cmd.add_argument("--json", action="store_true",
                          help="Emit JSON report instead of human-readable console output")
     run_cmd.add_argument("--env", metavar="PATH", help="Path to a .env file")
+
+    tel_cmd = sub.add_parser(
+        "telemetry", help="Inspect persisted telemetry (no API key required)",
+    )
+    tel_sub = tel_cmd.add_subparsers(dest="telemetry_command")
+    summarize = tel_sub.add_parser(
+        "summarize",
+        help="Print an aggregate summary of per-skill runs over persisted events",
+    )
+    summarize.add_argument(
+        "--path", metavar="PATH", default="",
+        help="Telemetry directory (default: read from sentinel.yml)",
+    )
+    summarize.add_argument(
+        "--repo-path", metavar="PATH", default="",
+        help="Repo root used to resolve the configured telemetry path",
+    )
+
     args = parser.parse_args()
 
     if args.command == "eval" and not getattr(args, "eval_command", None):
         eval_cmd.print_help()
+        sys.exit(2)
+    if args.command == "telemetry" and not getattr(args, "telemetry_command", None):
+        tel_cmd.print_help()
         sys.exit(2)
     return args
 

@@ -27,11 +27,25 @@ class ModeConfig:
 
 
 @dataclass
+class TelemetryConfig:
+    """Per-repo telemetry sink configuration.
+
+    Disabled by default — teams opt in. When enabled, the runner
+    writes one JSONL event per skill run to ``path``. Privacy: only
+    titles, severities, files, and line numbers are emitted; finding
+    bodies are not (they can quote multi-line code).
+    """
+    enabled: bool = False
+    path: str = ".sentinel/telemetry"
+
+
+@dataclass
 class SentinelConfig:
     skill_configs: list[SkillConfig] = field(default_factory=lambda: [SkillConfig(name="change_completeness")])
     fail_on: list[str] = field(default_factory=list)
     routing: list[Route] = field(default_factory=list)
     mode: ModeConfig = field(default_factory=ModeConfig)
+    telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
 
     @property
     def skills(self) -> list[str]:
@@ -130,4 +144,17 @@ def _parse(raw: dict) -> SentinelConfig:
         on_merge=raw_mode.get("on_merge", []),
     )
 
-    return SentinelConfig(skill_configs=skill_configs, fail_on=fail_on, routing=routing, mode=mode)
+    # Parse telemetry config (opt-in)
+    raw_tel = raw.get("telemetry", {}) or {}
+    telemetry = TelemetryConfig(
+        enabled=bool(raw_tel.get("enabled", False)),
+        path=raw_tel.get("path", ".sentinel/telemetry"),
+    )
+
+    return SentinelConfig(
+        skill_configs=skill_configs,
+        fail_on=fail_on,
+        routing=routing,
+        mode=mode,
+        telemetry=telemetry,
+    )

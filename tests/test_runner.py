@@ -261,3 +261,96 @@ def test_failing_skill_does_not_block_others(monkeypatch):
     assert "good" in results
     assert len(results["good"]) == 1
     assert results["good"][0].title == "found"
+
+
+# -- telemetry integration --
+
+class _RecordingSink:
+    def __init__(self):
+        self.events = []
+
+    def emit(self, event):
+        self.events.append(event)
+
+
+def test_runner_emits_one_event_per_skill(monkeypatch):
+    config = _config(["change_completeness"])
+    context = Context(repo="acme/api", pr_number=42)
+    monkeypatch.setattr(
+        "sentinel.runner._resolve_skills",
+        lambda *a, **kw: [_GoodSkill(), _GoodSkill()],
+    )
+    sink = _RecordingSink()
+
+    run_skills("diff", context, config, event_type="pull_request", telemetry=sink)
+
+    assert len(sink.events) == 2
+    for ev in sink.events:
+        assert ev.skill == "good"
+        assert ev.repo == "acme/api"
+        assert ev.pr_number == 42
+        assert ev.trigger == "pull_request"
+        assert ev.error is None
+        assert ev.finding_count == 1
+
+
+def test_runner_telemetry_shares_session_id(monkeypatch):
+    """All events from one run_skills call share the same session_id."""
+    config = _config(["change_completeness"])
+    context = Context(repo="r", pr_number=0)
+    monkeypatch.setattr(
+        "sentinel.runner._resolve_skills",
+        lambda *a, **kw: [_GoodSkill(), _GoodSkill(), _GoodSkill()],
+    )
+    sink = _RecordingSink()
+
+    run_skills("diff", context, config, telemetry=sink)
+
+    sids = {ev.session_id for ev in sink.events}
+    assert len(sids) == 1
+
+
+def test_runner_telemetry_records_skill_error(monkeypatch):
+    """When a skill raises, telemetry records the exception type with no findings."""
+    config = _config(["change_completeness"])
+    context = Context(repo="r", pr_number=0)
+    monkeypatch.setattr(
+        "sentinel.runner._resolve_skills",
+        lambda *a, **kw: [_CrashingSkill()],
+    )
+    sink = _RecordingSink()
+
+    run_skills("diff", context, config, telemetry=sink)
+
+    assert len(sink.events) == 1
+    ev = sink.events[0]
+    assert ev.skill == "crasher"
+    assert ev.error == "RuntimeError"
+    # On error we emit zero findings — the safe placeholder finding is for the
+    # PR comment, not telemetry; it would otherwise pollute aggregates.
+    assert ev.finding_count == 0
+
+
+def test_runner_without_telemetry_works(monkeypatch):
+    """Default (no sink) must not error."""
+    config = _config(["change_completeness"])
+    context = Context(repo="r", pr_number=0)
+    monkeypatch.setattr(
+        "sentinel.runner._resolve_skills",
+        lambda *a, **kw: [_GoodSkill()],
+    )
+    # Should not raise.
+    results = run_skills("diff", context, config)
+    assert "good" in results
+
+
+def test_runner_telemetry_duration_is_nonnegative(monkeypatch):
+    config = _config(["change_completeness"])
+    context = Context(repo="r", pr_number=0)
+    monkeypatch.setattr(
+        "sentinel.runner._resolve_skills",
+        lambda *a, **kw: [_GoodSkill()],
+    )
+    sink = _RecordingSink()
+    run_skills("diff", context, config, telemetry=sink)
+    assert sink.events[0].duration_s >= 0
