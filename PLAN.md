@@ -30,6 +30,19 @@ Each phase builds on the one before it. You cannot fix what you cannot judge. Yo
 
 This repo is the reference implementation. The four customization layers (org config, `CLAUDE.md`, `sentinel.yml`, `.sentinel/skills/`) are designed so a team can adopt sentinel without forking it. The eval harness is designed so a team can trust the system without trusting us. The framework is designed so adding a new judgment check is a markdown file, not a code change. If a team outside this org can run sentinel on their repo, get useful findings on day one, and write their own skill on day three — the framework works.
 
+### Current direction (2026-06): drive sentinel from a real autonomous workload
+
+Sentinel's PR-review surface is feature-complete enough. Further investment in skills, fixtures, and the LLM judge layer has diminishing returns *without a real downstream consumer*. The framework now evolves in service of one — a fully autonomous inference service (separate repo) where coding agents push, sentinel gates, and the cluster manages itself.
+
+This shifts emphasis on the milestone map:
+
+- **v0.5 (in progress)** stays primary because the inference service is where real telemetry comes from.
+- **v0.6 (auto-fix)** and **v0.7 (operational agent)** become load-bearing — drift detection and auto-PRs are what make the inference service self-maintaining.
+- **v0.7.5 (autonomous merge gate)** is the unlock — once an agent commit can land without a human reviewer, the whole loop closes.
+- **v0.8 (skill authoring)** and **v1.0 (general framework)** wait. They serve OSS adopters that don't exist yet. Adoption follows a real case study, not the other way around.
+
+Sentinel doesn't become the orchestrator (see Non-goals). It stays one component — the *Reviewer* and eventually the *Operator* — inside a fleet driven by the inference repo.
+
 ---
 
 ## The problem
@@ -647,31 +660,39 @@ Sentinel can fix it. It creates a branch, applies the change, opens a draft PR. 
 
 ---
 
-### v0.7 — Operational agent preview
+### v0.7 — Operational agent
 
-**The problem.** Sentinel currently reacts to PRs. But drift happens between PRs too: a shared module is updated in one repo, consumers in other repos are now stale. An infrastructure config is manually changed in the console but not reflected in the Terraform state. A deployment config references a secret that was rotated but the deployment manifest was not updated.
+**The problem.** Drift happens between PRs. A shared module updates; consumers stale. Console-edited infra diverges from Terraform state. Rotated secrets unreferenced in manifests. The PR loop catches none of this.
 
 **What ships:**
-- Scheduled mode: sentinel runs on a cron, diffs current state against expected state, opens PRs for detected drift
-- Incident correlation: when a GitHub issue is labeled `incident`, sentinel identifies the most likely causal PR and surfaces it
-- Deployment gate: sentinel as a required check before deploy, not just before merge — reviews the full set of changes since last deploy
+- **Scheduled drift detection** — cron runs sentinel against live state vs declared state; opens a PR per detected drift.
+- **Incident correlation** — GitHub issues labelled `incident` get a sentinel comment naming the most likely causal commit.
+- **Deployment gate** — sentinel as a required check on the changes since last deploy, not just since last merge.
 
-**What this proves:** The review agent framework generalizes to operational use. Same skills, same judgment, different trigger. Git remains the interface — the output is always a PR or a finding, never a direct mutation.
+**What this proves:** Same skills, different trigger. Git stays the interface — output is always a PR or a finding, never a direct mutation. This is the milestone that turns the inference service from "agents commit code" to "cluster manages itself."
 
 ---
 
 ### v0.7.5 — Autonomous merge gate
 
-**The problem.** In the autonomous-agent era the PR loop collapses: a coding agent pushes a commit, tests run, and *something* decides whether to merge. Today that "something" is implicit — either a human still reviews, or there is no gate at all. Sentinel already has the judgment layer; what is missing is an explicit policy for autonomous gating and an explicit answer for what happens when sentinel blocks an agent commit (because no human is on the other side of the comment).
+**The problem.** A coding agent pushes a commit. *Something* decides whether to merge. Today that "something" is implicit — a human still reviews, or there is no gate. Sentinel has the judgment; what's missing is an explicit policy for autonomous gating and an explicit answer for what happens when sentinel blocks (because no human is on the other side of the comment).
+
+**Three viable commit shapes** the gate must support:
+
+| Shape | When to use |
+|---|---|
+| Auto-merge PR | Default. Agent opens PR, gates pass → auto-merge. Free GitHub audit trail. |
+| Pre-receive gate (no PR) | High commit rate, audit handled elsewhere. |
+| Merge queue (`merge_group`) | Only when conflict rate from concurrent agent commits warrants serialization. |
 
 **What ships:**
-- **Autonomous-gate policy in `sentinel.yml`:** a single block declaring what constitutes "green" for an agent-pushed commit (tests pass + sentinel verdict + optional judge confidence floor) and what happens on red.
-- **Block-mode choices, configurable per repo:** `file-issue` (open a GitHub issue with the finding and link the commit), `page-human` (post to a configured webhook / on-call), or `handoff-to-autofix` (chain into the v0.6 auto-fix loop).
-- **`agent_commit` trigger wired up:** the trigger table entry stops being aspirational. Same skill code, new output path.
-- **Agent-loop telemetry:** because there is no human on the other end, signal quality matters more. Sentinel emits a per-decision event the operator can audit: what blocked, what passed, what was handed to auto-fix, how long the gate took.
-- **Reference deployment:** documented in `docs/autonomous-gate.md`, with a working example wired into one of the user's own repos (e.g. an AWS inference pipeline) so the pattern is proven end-to-end.
+- **Gate policy in `sentinel.yml`** — one block declaring "green" (tests + sentinel verdict + optional judge confidence floor) and what happens on red.
+- **Block-mode choices** — `file-issue`, `page-human` (webhook / on-call), or `handoff-to-autofix` (chain into v0.6).
+- **`agent_commit` trigger wired** — same skill code, new output path. Stops being aspirational.
+- **Agent-loop telemetry** — per-decision event (what blocked, what passed, gate latency). No human to compensate for noise; signal quality matters more.
+- **Reference deployment** — `docs/autonomous-gate.md` with the inference repo wired in end-to-end. Pattern proven on a real workload before being recommended to anyone else.
 
-**What this proves:** Sentinel survives the trigger model collapsing from "PR comment loop" to "agents commit and the gate decides." The framework takes the gating decision as a first-class concern rather than leaving every operator to invent it. This is what makes the design durable across the 1–2 year arc to fully autonomous workflows.
+**What this proves:** Sentinel survives the trigger model collapsing. The framework takes the gate decision as a first-class concern rather than leaving every operator to invent it. This is what makes the design durable across the 1–2 year arc to autonomous workflows.
 
 ---
 

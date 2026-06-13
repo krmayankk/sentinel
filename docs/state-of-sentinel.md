@@ -76,3 +76,16 @@ Commercially / as an adopted framework: depends on three things sentinel does no
 3. **One outside adopter.** Your other repos are credibility; someone *else's* repo is legitimacy. v0.5 BYO telemetry is the trust-unlock for that.
 
 The v0.4 → v0.5 ordering is correct: measure first, then learn from production. Resist jumping to v0.6 (auto-fix) before v0.5 produces real data. That ordering is what separates a DE-level execution from "interesting prototype."
+
+---
+
+## Pivot (2026-06): sentinel evolves through a real autonomous workload
+
+Sentinel's PR-review surface is feature-complete enough. Further investment in skills, fixtures, and the LLM judge layer has diminishing returns *without a real downstream consumer*. The pivot:
+
+- **Sentinel is now driven by a separate project** — a fully autonomous inference service (agents commit code, sentinel gates, the cluster manages itself). That repo lives elsewhere; this one stays focused.
+- **Primary milestones shift** to v0.5 (telemetry from real usage), v0.6 (auto-fix), v0.7 (operational agent for drift / incidents), and v0.7.5 (autonomous merge gate). The PR-review polish is in maintenance mode.
+- **v0.8 (skill authoring CLI) and v1.0 (general framework) wait.** They serve OSS adopters that don't exist yet. Adoption follows a real case study, not the other way around.
+- **Sentinel does not become the orchestrator.** It stays the *Reviewer* (and eventually the *Operator*) inside a fleet — see Non-goals in `PLAN.md`.
+
+This is what makes sentinel **earn** its relevance instead of just claim it. The framework was good enough to support a real use case six months in; the discipline now is to let that use case shape what ships next.
