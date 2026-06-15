@@ -43,6 +43,10 @@ This shifts emphasis on the milestone map:
 
 Sentinel doesn't become the orchestrator (see Non-goals). It stays one component — the *Reviewer* and eventually the *Operator* — inside a fleet driven by the inference repo.
 
+### The bake-off
+
+Concurrent with the autonomous workload, sentinel is also the *measurement layer* for a multi-backend comparison: open model + full sentinel harness vs. frontier model + the same harness, on quality / tokens / latency / cost. See [`docs/bake-off.md`](docs/bake-off.md) for the methodology. The bake-off is what turns sentinel's sovereignty thesis from architectural claim into evidence — and is the load-bearing reason `v0.6 LLMProvider` is now early in the queue.
+
 ---
 
 ## The problem
