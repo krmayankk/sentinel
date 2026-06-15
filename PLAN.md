@@ -53,6 +53,10 @@ Sentinel doesn't become the orchestrator (see Non-goals). It stays one component
 
 Concurrent with the autonomous workload, sentinel is also the *measurement layer* for a multi-backend comparison: open model + full sentinel harness vs. frontier model + the same harness, on quality / tokens / latency / cost. See [`docs/bake-off.md`](docs/bake-off.md) for the methodology. The bake-off is what turns sentinel's sovereignty thesis from architectural claim into evidence — and is the load-bearing reason `v0.6 LLMProvider` is now early in the queue.
 
+### Skills compound — they don't just accumulate
+
+A skill system that only *grows* eventually drowns in its own output. A skill system that *compounds* is what makes the framework worth adopting. Sentinel's skills sit at three tiers — **raw** (narrow checks), **mid-level** (today's built-ins, vertical-slice expertise), and **meta** (skills about skills). The lifecycle is *signal → raw skill → retired-as-fixture → mid-level skill grows*, so accumulated evidence carries forward when a skill is subsumed. The same architecture generalises to every learning agent in the broader fleet — Planner, Implementer, Operator, Reviewer all implement the same template of *skills + eval + telemetry + meta-loop*. This is the **anti-blurriness model**: re-read [`docs/skill-design.md`](docs/skill-design.md) when the architectural picture goes hazy. It promotes the auto-discovery thinking out of v0.8 (where it was buried as one bullet) into a top-level concept — because *the loop that generates judgment* is itself the framework's defining feature.
+
 ---
 
 ## The problem
