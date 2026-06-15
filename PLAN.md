@@ -6,6 +6,12 @@ Sentinel is a framework for AI agents that reason about software changes with ju
 
 The first agents are **reviewers**: passive, read-only, they analyze diffs and produce findings. The architecture supports **actors**: agents that fix what they find, opening draft PRs for human review. The same judgment framework that reviews PRs can eventually manage infrastructure — detect drift, correlate incidents with recent changes, enforce deployment gates — because both require the same capability: reasoning about relationships across a system.
 
+### Scope of this document
+
+This is the plan for **sentinel** — one layer (the reviewer agent, the eval harness, the telemetry, the operator agent in time) within a broader agentic-AI architecture. The wider picture — a model-portable platform, a multi-agent fleet (planner, implementer, operator, postmortem), drop-in adoption for any team — is deliberately outside the scope of this document. It will get its own home when the work warrants it, most likely a separate orchestrator repo with its own plan.
+
+For sentinel's role inside that fleet, see § Current direction and § Non-goals. The rest of this document is the sentinel plan in increasing depth: why the triggering model is changing, the milestone progression, why open-source adoption is first-class, where we are today, and what the bake-off measures.
+
 ### The triggering model is decoupling from the PR
 
 Most code review today happens at PR-open. That model is not going away in the next year — but it is fraying at the edges. Merge queues (GitHub native, Graphite, Cursor's pending Graphite integration) move review from before-merge to queue-time. Autonomous coding agents land commits no human authored. Trunk-based teams already gate on tests, not human review. The endpoint of the trajectory is **no PR at all** — code is generated, tests run, gates pass, it lands; if something is wrong, a bug is auto-filed or an autofix branch is opened.
@@ -42,6 +48,10 @@ This shifts emphasis on the milestone map:
 - **v0.8 (skill authoring)** and **v1.0 (general framework)** wait. They serve OSS adopters that don't exist yet. Adoption follows a real case study, not the other way around.
 
 Sentinel doesn't become the orchestrator (see Non-goals). It stays one component — the *Reviewer* and eventually the *Operator* — inside a fleet driven by the inference repo.
+
+### The bake-off
+
+Concurrent with the autonomous workload, sentinel is also the *measurement layer* for a multi-backend comparison: open model + full sentinel harness vs. frontier model + the same harness, on quality / tokens / latency / cost. See [`docs/bake-off.md`](docs/bake-off.md) for the methodology. The bake-off is what turns sentinel's sovereignty thesis from architectural claim into evidence — and is the load-bearing reason `v0.6 LLMProvider` is now early in the queue.
 
 ---
 
