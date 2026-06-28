@@ -150,6 +150,7 @@ A skill doesn't know which event fired it. The runner extracts a diff and a cont
 | `push` | Commit pushed to a branch | previous..HEAD diff | Wired in entrypoint; GHA template pending |
 | `merge_group` | GitHub merge queue evaluates a queued PR | queued diff | Same code path as `pull_request`; just a different GHA event |
 | `schedule` | Cron — diff between last-known-good main and current main | drift diff | Planned (v0.7) |
+| `audit` | Manual or scheduled compliance scan | whole tree (files matched by routing globs) | Planned (v0.5.5) — output is a baseline, not a per-change finding |
 | `agent_commit` | A coding agent pushes; gate before merge | agent's diff | Future (v1.0+) — same skill code, new output path (auto-file bug or open autofix branch) |
 
 The two trigger-time controls already in `sentinel.yml`:
@@ -175,6 +176,8 @@ fail_on: [critical, high]  # when you trust it: block on high severity too
 ```
 
 Start with zero friction. Move findings to blocking as you validate they are real and actionable. The progression is explicit and team-controlled.
+
+From v0.5.5, blocking is keyed on *new* findings, not all findings: a finding blocks only when its fingerprint isn't already in the committed baseline. Pre-existing debt is reported but never blocks an unrelated PR — the cardinal rule that a contributor is never blocked for code they didn't write. `fail_on` also becomes per-skill at that point, so a trusted skill can block on new violations while a freshly-added skill stays observe-only until its baseline is seeded.
 
 ---
 
@@ -656,6 +659,53 @@ For sentinel to be adopted outside our own projects, telemetry must be opt-in an
 #### What this proves
 
 AI systems learn from their environment without retraining weights. The eval corpus stays current because production feeds it. Skills get sharper because they see what reviewers actually flag and dismiss. The pattern — telemetry → eval growth → prompt refinement — is the loop every serious AI deployment needs and almost none publish openly. Sentinel ships it as part of the framework.
+
+---
+
+### v0.5.5 — Baseline & compliance (stock measurement + ratchet)
+
+**The gap.** v0.4 and v0.5 measure the *flow* — findings per PR, dismissed vs. acted on. Neither answers the *stock* question: how compliant is the whole repo, right now, against a given skill? PR review is structurally blind to it — a diff that introduces no violations passes while the untouched code may hold hundreds. And the moment you add a new skill — a new compliance dimension: i18n, a security standard, a rollout — *all* existing code is unmeasured: the skill has reviewed zero PRs and cannot know the repo's state without scanning it. This is the capability an autonomous workload needs most: without a baseline, a fleet of agent commits either drowns in legacy-debt findings or grandfathers everything silently.
+
+**The model — flow + stock, one judgment.**
+
+```
+level(today) = baseline (from an audit) + Σ(PR deltas since)
+```
+
+Same skills, same encoded judgment. The `audit` trigger feeds the skill the *tree* (files selected by routing globs) instead of a *diff*, and the output contract flips from "is this change compliant" to "enumerate the violations." The result is a **baseline** — `.sentinel/baseline.json`, committed to the repo: the set of known pre-existing violations per skill. PR review then *ratchets* against it. Audit does not run per-PR — the PR delta already captures change. Audit runs to seed the baseline, to onboard a new skill, and on a schedule to correct drift.
+
+**What ships:**
+- **`audit` trigger** — runs routed skills over matching files, emits a finding per violation, writes/updates the baseline. Reuses the v0.7 schedule mechanism.
+- **Stable fingerprints** — each finding gets a line-insensitive identity (skill + file + anchor) so line drift doesn't manufacture false "new" findings. Skills may emit an explicit anchor; the default is (file + normalized title).
+- **The ratchet, on every PR:**
+  1. Run routed skills on the diff (today's path).
+  2. Load the committed baseline.
+  3. Classify each finding — **NEW** (not in baseline) / **KNOWN** (standing debt) / **FIXED** (a baselined violation this PR removed).
+  4. **Block only on NEW** at the skill's `fail_on` severity. KNOWN is reported, never blocks. FIXED decrements the baseline — burndown credit.
+  5. Emit a per-skill telemetry event carrying `{new, known, fixed, baseline_total}`.
+- **New-skill onboarding** — a skill with no baseline runs **observe-only** (non-blocking) until `sentinel audit --skill X` scans existing code once and seeds its baseline with the starting debt. That one-time scan is the only audit a new skill triggers; from then on it ratchets.
+- **Re-baseline escape hatch** — `sentinel audit --update-baseline` accepts the current state. Because the baseline is a committed file, the change appears in the PR diff and is itself code-reviewed — no silent waiver.
+- **Per-skill / per-route `fail_on`** — finally wired (planned since v0.3). This is the blocking/non-blocking tier: new skills observe, trusted skills block on NEW.
+- **Surfacing** — the job summary and PR comment gain two panels: **This PR** (new / fixed) and **Repo debt** (baseline totals for the touched skills, read straight from the committed baseline — no re-audit). `sentinel telemetry summarize` gains the stock view: baseline trajectory per skill = the burndown curve, alongside the flow view it already has.
+
+**Scheduled audit keeps the number live.** The `audit` trigger also runs on a cron against *every* skill, not only newly-added ones — re-measuring the whole tree so the compliance number reflects reality (direct-to-main commits, anything PRs missed, drift). Re-latching onto *existing* skills is the point: a cron that only scans for new-skill issues silently lets established skills rot. Each scheduled run **always emits a fresh measurement**, but it does **not** silently rewrite the accepted baseline — it opens a PR proposing the delta (consistent with v0.7: git is the interface, output is a PR or a finding, never a silent mutation). That keeps the ratchet honest — new debt cannot launder itself into the baseline — while keeping the headline number current.
+
+**The PR is the surface.** The most valuable view is the one a reviewer already looks at. Every PR shows, per skill: what *this* PR added vs. fixed (flow), the repo's *current* compliance level (stock), and how that level moved over recent PRs (trend) — e.g. "this repo carries 12 known migration risks, down from 18 a month ago; this PR moves it to 13." Debt and new issues are never conflated: new is actionable-now and may block; debt is context and never blocks an unrelated change.
+
+**Compliance telemetry as a standard emission.** Every skill run already emits a per-skill, per-PR event; the framework promotes this to a documented *compliance event* — `{repo, pr, skill, severity, new, known, fixed, baseline_total, ts}` — a first-class contract independent of where it's stored (BYO sink today; OTLP spans for Phoenix/Langfuse, same posture as v0.5). Three signals fall out of that one stream for free:
+- **Current compliance** per skill (latest `baseline_total`).
+- **Trend** per skill over time (`baseline_total` trajectory = burndown).
+- **Attribution** — *which PRs deteriorated which skills most* (rank PRs by `new` per skill). A deterioration leaderboard points straight at the changes that introduced the most debt — exactly where to aim a fix or a new skill.
+
+Standardising the *emission* rather than the storage is the leverage: a dashboard, the eval corpus, or an alert all read one stable schema. We don't have to know today where it's consumed — only that every trigger emits it the same way.
+
+**Eval alignment.** Audit mode gets first-class fixtures: alongside `diff.patch` / `expected.json` (flow), a fixture may carry an `expected_baseline.json` (stock), scored by the same deterministic checker — did the audit enumerate the right violations across `repo/`? The audit path stays measurable by the v0.4 harness rather than a side channel, and the attribution logic is regression-tested like any skill.
+
+**Compatibility — this does not break v0.3 as it stands.** Every part is additive. No baseline file → exactly today's behavior (all findings are "new," `fail_on` is global). New event fields are optional. The `Skill.run(diff, context)` signature is untouched — audit is a new *traversal + entrypoint* that composes the skill's judgment over files, not a change to the skill contract. Implementation lands later; the plan commits to the shape, not a rewrite.
+
+**Deferred — touched-file evaluation.** Pure diff review can miss issues where a small change interacts with untouched code. Evaluating the *full content* of files the PR touches (not just the hunk) catches those interactions and makes fix-detection exact. It is bounded (touched files only, not the tree) and rides the same machinery as FIXED-detection, so it lands as a refinement here rather than a separate effort.
+
+**What this proves.** The flow/stock split completes the measurement story: v0.5 tracks whether new code degrades; this tracks the absolute level and its trend. Compliance becomes a managed number with a burndown, not a vibe — and a new standard can be rolled out across a repo (or, with cross-repo, a fleet) with a known starting debt and a ratchet that prevents regression. This is the missing piece between "we review PRs" and "we run a compliance program" — and it's the distinction between sentinel and the company proposal that started this: they specified the compliance/tracking layer; this is how it bolts onto a judgment engine that already exists.
 
 ---
 
