@@ -94,6 +94,25 @@ The version that loses credibility is the one with no honest acknowledgement of 
 
 ---
 
+## Disagreement mining — bootstrapping the corpus from model disagreement
+
+The corpus is the bottleneck — hand-labeling is the real cost, which is why it stays small. Model
+disagreement is a cheap way to point human labeling at the highest-signal cases. Treat a **trusted
+frontier model as the reference anchor**; where a cheaper/open model **disagrees** with it, that case is
+the most valuable candidate for a human-labeled fixture. One mechanism, three payoffs: agreement raises
+confidence, disagreement grows the corpus *at the points of maximum uncertainty*, and the same
+multi-backend run is already the bake-off itself.
+
+**Honest guardrail — the frontier model is NOT ground truth.** Treating "frontier is right" as an oracle
+measures *how well the open model mimics frontier*, not *how correct it is* — and frontier models are wrong
+often enough to matter. So frontier-vs-open disagreement is a **sampling** mechanism (where to look); a
+human still ratifies *who was actually right* on the disagreements that become fixtures. Used as a sampler
+it's excellent; used as an oracle it silently measures the wrong thing.
+
+*(Extension — not yet implemented; depends on the v0.6 provider seam to run multiple backends.)*
+
+---
+
 ## Non-goals
 
 - **Not a leaderboard.** This is a single team's workload measured rigorously. No claim that the same result transfers to unrelated workloads — the whole point of the harness is that it encodes *team-specific* judgment.

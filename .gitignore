@@ -19,3 +19,6 @@ evals/results/*.json
 evals/results/*.md
 !evals/results/.gitkeep
 .DS_Store
+
+# blog drafts + positioning log — kept local, not committed
+docs/blog/

@@ -182,6 +182,35 @@ Production telemetry (v0.5) will *propose* new fixtures from real PR feedback, b
 
 ---
 
+## Making the scorer more precise — the typed-claim direction
+
+The deterministic scorer today grades four things well — skill (stamped by the runner, zero brittleness),
+severity (floor, not equality), file/location, and the derived verdict — and leans on `match_any`
+substring matching for the rest. Substring-on-prose is the *loosest* rung: it works, but it's only as good
+as the anchors a human picks. The direction that makes Layer 1 sharper *without* sacrificing determinism is
+to **push each finding from prose toward a typed claim, and grade the type, not the text**:
+
+- **First-class `symbol` field** — the skill emits the exact entity it's flagging
+  (`enable_performance_insights`) as structured data, not buried in the message. Expected matches it
+  exactly/normalized. A correct finding is forced to name its subject, and a discrete field is airtight.
+- **`category` per skill from a controlled vocabulary** — e.g. `workflow_security` emits
+  `privilege_escalation | missing_permissions | secret_exposure`. Grades "the right *kind* of problem" as
+  an enum. Needs an `other` escape and periodic vocabulary review.
+- **Location as a set with precision/recall** — compare the set of flagged files against the expected set
+  and score the overlap (3 of 4 callers = 0.75 recall, not a binary fail).
+- **Diff-derived anchors** — the patch is machine-parseable; extract the changed files/identifiers and
+  check the finding references actually-changed code, auto-generating anchors instead of hand-authoring
+  `match_any`.
+
+Two ceilings kept honest: every structured field is a new thing the model must populate correctly (trades
+prose-brittleness for output-format reliability — mitigate with tool-use / constrained decoding); and
+structure makes *where / what-kind* airtight but cannot make *why / is-the-reasoning-sound* deterministic —
+that ceiling is exactly where the LLM judge (Layer 2) and humans take over.
+
+*(Design direction — not yet implemented. `match_any` remains the shipped fallback rung.)*
+
+---
+
 ## Why not just an LLM judge?
 
 An LLM judge can grade subjectively — actionability, calibration, tone. But it has three problems as the *primary* signal:
