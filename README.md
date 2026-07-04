@@ -59,7 +59,7 @@ Push to `CLAUDE.md` and the next PR picks it up. No redeployment, no DSL to lear
 
 ## Built-in skills
 
-Sentinel ships with skills that catch real incident classes no existing tool prevents:
+Sentinel ships with skills for judgment-heavy incident classes — the parts that turn on relationships across files, your team's conventions, and blast radius. Where a specialized tool already covers a pattern (e.g. `zizmor` for workflow security, `squawk` for migrations), sentinel complements it rather than replaces it — its edge is the reasoning and context those tools can't encode, not re-matching known patterns:
 
 | Skill | What it catches | Severity |
 |---|---|---|
