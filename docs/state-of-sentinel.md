@@ -1,6 +1,6 @@
 # State of Sentinel (2026-05-30)
 
-A snapshot of where this project stands relative to the state of the art in AI eval and autonomous code review, and an honest read on what it would take to make this Distinguished-Engineer-level work people would want to adopt.
+A snapshot of where this project stands relative to the state of the art in AI eval and autonomous code review, and an honest read on what it would take to make this work people would want to adopt.
 
 Audience: anyone evaluating sentinel as a framework, contributing to it, or considering the same design choices in their own AI system.
 
@@ -30,21 +30,21 @@ Sentinel is an AI agent framework whose unit of work is a **skill** — a vertic
 
 ---
 
-## Distinguished-Engineer read
+## Engineering maturity read
 
-The **thinking** is DE-level. The **implementation** is strong senior+.
+The architecture is well-reasoned; the implementation is solid with clear, named gaps.
 
 What a reviewer who knows this space would note:
 
 | | |
 |---|---|
-| ✅ Architectural reasoning | Skills, layered customization, trigger decoupling, two-layer evals — these are the kinds of design decompositions a DE produces, not just clean code. |
-| ✅ Honest documentation | `docs/evals.md` arguing *why* deterministic, *why* `match_any` not `title_contains` — that's senior-staff judgment legible to a reviewer. |
+| ✅ Architectural reasoning | Skills, layered customization, trigger decoupling, two-layer evals — substantive design decompositions, not just clean code. |
+| ✅ Honest documentation | `docs/evals.md` arguing *why* deterministic, *why* `match_any` not `title_contains` — design judgment legible to a reviewer. |
 | ✅ Dogfooding | The repo reviews itself. Sentinel's own self-review caught the security gap that PR #15 then fixed. Hard to fake. |
-| ⚠️ Adoption | Zero outside users yet. DE-level is partly "did anyone other than the author find it useful?" |
+| ⚠️ Adoption | Zero outside users yet. Real validation is partly "did anyone other than the author find it useful?" |
 | ⚠️ Production reliability data | Absent until v0.5 telemetry ships. |
 
-**As an interview artifact: yes.** The design choices — skill abstraction, two-layer evals, BYO telemetry storage for trust, the deliberate decision not to grade on title keywords — are exactly what hiring committees probe for, and each one is defensible with a *why*.
+**The design choices are defensible.** The skill abstraction, two-layer evals, BYO telemetry storage for trust, and the deliberate decision not to grade on title keywords are each backed by a concrete *why*.
 
 ---
 
@@ -75,7 +75,7 @@ Commercially / as an adopted framework: depends on three things sentinel does no
 2. **5-minute onboarding.** The README quickstart is good; needs to survive an actual stranger trying it in front of you.
 3. **One outside adopter.** Your other repos are credibility; someone *else's* repo is legitimacy. v0.5 BYO telemetry is the trust-unlock for that.
 
-The v0.4 → v0.5 ordering is correct: measure first, then learn from production. Resist jumping to v0.6 (auto-fix) before v0.5 produces real data. That ordering is what separates a DE-level execution from "interesting prototype."
+The v0.4 → v0.5 ordering is correct: measure first, then learn from production. Resist jumping to v0.6 (auto-fix) before v0.5 produces real data. That ordering is what separates a disciplined execution from "interesting prototype."
 
 ---
 
@@ -89,3 +89,11 @@ Sentinel's PR-review surface is feature-complete enough. Further investment in s
 - **Sentinel does not become the orchestrator.** It stays the *Reviewer* (and eventually the *Operator*) inside a fleet — see Non-goals in `PLAN.md`.
 
 This is what makes sentinel **earn** its relevance instead of just claim it. The framework was good enough to support a real use case six months in; the discipline now is to let that use case shape what ships next.
+
+---
+
+## Addendum (2026-07): the three adoption gaps are one gap
+
+The three things this doc said sentinel lacks — a wow demo, production reliability data, an outside adopter — plus the v0.7.5 gate-certification need are the same underlying gap: **sentinel has only ever been scored against fixtures it curated for itself, never against reality.**
+
+The unification is [`docs/backtest.md`](backtest.md) (v0.5.6 in PLAN.md): replay skills over the repo's own outcome-labeled git history — reverts, hotfixes, reviewer-caught fixes as positives; never-touched-again PRs as the false-block set. One mechanism produces the personalized wow demo on any adopter's repo, grows the fixture corpus without users, certifies the autonomous gate with a measured operating point, and (via held-out validation of skills derived from the misses) makes v0.8's auto-discovery empirical instead of aspirational. It is the fastest path from "well-argued architecture" to "published receipt" — and the receipt matters more than any further architecture writing, including this doc.
