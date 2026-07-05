@@ -26,7 +26,8 @@ The architectural insight that makes the system *compound* rather than merely ac
 
 ```
 recurring signal (reviewer comments, incident "would-have-caught" lines,
-                  dismissal patterns, autonomous-loop failure patterns)
+                  dismissal patterns, autonomous-loop failure patterns,
+                  backtest misses — outcome-labeled failures no skill caught)
     │
     ▼
 raw skill candidate                ← cheap to ship, narrow, often wrong
@@ -99,6 +100,8 @@ Not every raw skill should graduate. The framework needs an explicit promotion c
 3. **Stable behaviour across runs.** Run N=5 times on the same fixture set; verdicts agree. Flaky skills do not promote.
 4. **Cross-context evidence.** It fires meaningfully on more than one file pattern, more than one PR, more than one author. A skill that only ever fires on one file is a single-purpose lint, not a class-wide judgment.
 
+When a candidate is derived from backtest misses ([`backtest.md`](backtest.md) § Deriving new skills), gates 1 and 4 take a sharper form: it must catch **held-out** misses it was not derived from, without raising the false-block rate on the held-out clean set. Time-split train/test on the repo's own history — the candidate's backtest report is its birth certificate.
+
 Retirement is symmetric. A shipped skill loses its place when:
 
 - Dismissal rate climbs above a threshold over a 30-day window.
@@ -106,6 +109,37 @@ Retirement is symmetric. A shipped skill loses its place when:
 - A higher-tier skill subsumes it on the eval corpus.
 
 When a skill retires, its fixtures stay. They become test cases for whatever skill takes over the territory.
+
+---
+
+## Skill maintenance across model generations
+
+If skills are the durable asset and the model is a swappable runtime, then a fleet of skills
+(ours, and eventually every adopter's) needs explicit maintenance across model churn. Two
+distinct kinds of rot, with different detectors and different repairs — conflating them destroys
+the asset:
+
+| | Transfer rot | Content rot |
+|---|---|---|
+| Cause | The **model** changed; the judgment is still right but the new model executes it poorly from this prompt | The **world** changed; the encoded convention/API/pattern is stale |
+| Detector | The skill's own **fixtures**, re-run under the candidate model — cheap, pre-migration, offline | **Production telemetry** — rising dismissal rate, firing-health gone quiet (v0.5.5) — slow, online |
+| Repair | Rephrase the prompt; the judgment content is untouched | Update the judgment; the phrasing is irrelevant |
+
+Consequences:
+
+- **Every skill's fixture set is its model-compatibility test.** This is why fixtures accumulate
+  everywhere by design (v0.4 evals, backtest promotion, the registry listing bar): a skill
+  without fixtures cannot be migrated safely, only YOLO'd.
+- **Model upgrades are per-skill migrations, not global flips.** `sentinel eval run --model
+  <candidate>` over a repo's skills + fixtures yields a per-skill migration report: pass →
+  migrate; fail → the skill stays **pinned** to its certified model (the LLMProvider seam and
+  tier routing already imply per-skill model choice; this supplies the certification input).
+- **Failed transfers are auto-repair candidates:** judgment content + failing fixtures → an LLM
+  proposes a rephrase → validated against the same fixtures → human approves. Self-healing
+  skills, trustworthy only because fixtures gate the loop. Meta-tier work.
+- At corpus scale, [`judgment-corpus.md`](judgment-corpus.md) Arm 2 is this same question asked
+  fleet-wide: "does encoded judgment transfer to model X" — the corpus answers it for the
+  ecosystem, the fixture migration report answers it for one repo.
 
 ---
 
@@ -130,4 +164,5 @@ The doc is the architectural North Star. The PLAN milestones are the order of co
 - Telemetry that captures the raw-signal feed: [`docs/telemetry.md`](telemetry.md)
 - Eval harness that gates promotion: [`docs/evals.md`](evals.md)
 - Bake-off that proves where open + harness wins: [`docs/bake-off.md`](bake-off.md)
+- Backtest that mines outcome-labeled signals and validates derived skills: [`docs/backtest.md`](backtest.md)
 - Strategic frame and milestone order: [`PLAN.md`](../PLAN.md)

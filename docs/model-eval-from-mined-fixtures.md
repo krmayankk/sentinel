@@ -1,6 +1,8 @@
 # Seed: a repeatable model-eval from mined PR fixtures
 
-**Status: seed / idea. Not built. To develop in a later session.**
+**Status: seed / idea. Superseded by the full spec in [`judgment-corpus.md`](judgment-corpus.md)
+(multi-repo corpus, review-thread labels, contamination controls, multi-model evaluator). This
+doc is kept as the original rationale; build from the new spec.**
 
 A repeatable way to measure new open-source / open-weight models against a corpus mined from a team's
 own git history (commits, PRs, review comments, reverts, incidents) — using the sentinel

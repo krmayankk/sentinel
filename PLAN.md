@@ -43,6 +43,7 @@ Sentinel's PR-review surface is feature-complete enough. Further investment in s
 This shifts emphasis on the milestone map:
 
 - **v0.5 (in progress)** stays primary because the inference service is where real telemetry comes from.
+- **v0.5.6 (backtest)** is the fastest path to empirical receipts — it replays skills over outcome-labeled git history (reverts, hotfixes, reviewer-caught fixes), which grows the fixture corpus without waiting for users and produces the measured operating point v0.7.5 needs. See [`docs/backtest.md`](docs/backtest.md).
 - **v0.6 (auto-fix)** and **v0.7 (operational agent)** become load-bearing — drift detection and auto-PRs are what make the inference service self-maintaining.
 - **v0.7.5 (autonomous merge gate)** is the unlock — once an agent commit can land without a human reviewer, the whole loop closes.
 - **v0.8 (skill authoring)** and **v1.0 (general framework)** wait. They serve OSS adopters that don't exist yet. Adoption follows a real case study, not the other way around.
@@ -151,6 +152,7 @@ A skill doesn't know which event fired it. The runner extracts a diff and a cont
 | `merge_group` | GitHub merge queue evaluates a queued PR | queued diff | Same code path as `pull_request`; just a different GHA event |
 | `schedule` | Cron — diff between last-known-good main and current main | drift diff | Planned (v0.7) |
 | `audit` | Manual or scheduled compliance scan | whole tree (files matched by routing globs) | Planned (v0.5.5) — output is a baseline, not a per-change finding |
+| `backtest` | Replay of historical merged PRs against today's skills | historical diff + repo at merge-base | Designed (v0.5.6, [`docs/backtest.md`](docs/backtest.md)) — output is a recall / false-block report with receipts, not a PR comment |
 | `agent_commit` | A coding agent pushes; gate before merge | agent's diff | Future (v1.0+) — same skill code, new output path (auto-file bug or open autofix branch) |
 
 The two trigger-time controls already in `sentinel.yml`:
@@ -719,6 +721,25 @@ Together these answer *which skill is decaying and in which direction* — losin
 **Deferred — touched-file evaluation.** Pure diff review can miss issues where a small change interacts with untouched code. Evaluating the *full content* of files the PR touches (not just the hunk) catches those interactions and makes fix-detection exact. It is bounded (touched files only, not the tree) and rides the same machinery as FIXED-detection, so it lands as a refinement here rather than a separate effort.
 
 **What this proves.** The flow/stock split completes the measurement story: v0.5 tracks whether new code degrades; this tracks the absolute level and its trend. Compliance becomes a managed number with a burndown, not a vibe — and a new standard can be rolled out across a repo (or, with cross-repo, a fleet) with a known starting debt and a ratchet that prevents regression. This is the missing piece between "we review PRs" and "we run a compliance program" — and it's the distinction between sentinel and the company proposal that started this: they specified the compliance/tracking layer; this is how it bolts onto a judgment engine that already exists.
+
+---
+
+### v0.5.6 — Backtest + onboarding: proof of judgment
+
+> Full designs: [`docs/backtest.md`](docs/backtest.md) (the measurement engine) and [`docs/onboard.md`](docs/onboard.md) (`sentinel onboard` — the one-command adoption flow that composes it: profile the repo, select and install skills, backtest against history, seed the v0.5.5 baseline, derive repo-specific skills from the misses, deliver everything as one reviewable PR). This entry is the milestone summary; the docs are the mechanics.
+
+**The gap.** Everything above measures sentinel against fixtures *we* curated or telemetry that requires users we don't have yet. Sentinel has never been scored against reality.
+
+**The mechanism.** `sentinel backtest` replays skills over the repo's own git history, where outcomes are already labeled for free: reverted PRs, hotfixed PRs, reviewer-caught issues, incident-linked changes (positives), and PRs that stayed clean (negatives — the false-block set). Replay = existing runner + worktree at the merge-base; `Skill.run(diff, context)` is untouched. Backtest is just one more trigger.
+
+**What ships:**
+- `sentinel backtest mine` — outcome labels from git log + GitHub API, no LLM (B1)
+- `sentinel backtest run` — two-pass replay (diff-only sweep, agentic on positives), report with per-PR receipts: recall on judgment-class positives, false-block rate on the clean set (B2–B3)
+- Fixture promotion — one command turns a backtest case into an eval fixture; closes the v0.5 corpus loop without production users (B4)
+- `sentinel backtest certify` — the gate operating-point table (`fail_on` tier → recall / false-block); the empirical basis for v0.7.5 (B5)
+- Skill derivation from misses — cluster uncaught positives, LLM-draft raw-skill candidates, **validate on held-out history** before human approval; v0.8's auto-discovery landed early, with train/test discipline instead of vibes (B7)
+
+**What this proves:** The judgment is measured against outcomes, not curated expectations. One mechanism produces the adoption demo (a stranger gets a personalized would-have-caught report on their own repo in ~30 minutes), the fixture engine, the gate certification, and the bake-off workload.
 
 ---
 
