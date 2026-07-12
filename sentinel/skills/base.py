@@ -171,6 +171,24 @@ def _safe_resolve(root: str, relative_path: str) -> str | None:
     return resolved
 
 
+def _strip_label(path: str, repo_path: str, path_labels: dict[str, str]) -> str:
+    """Strip a search path's cross-repo label prefix from a tool path.
+
+    grep results are labeled with the checkout's repo name (e.g.
+    "[owner/repo] sub/file.py"), so the model legitimately asks tools for
+    "owner/repo/sub/file.py". When the path starts with this search path's
+    label, return the remainder relative to the checkout root; otherwise
+    return the path unchanged.
+    """
+    label = path_labels.get(repo_path, "")
+    if label:
+        if path == label:
+            return "."
+        if path.startswith(label + "/"):
+            return path[len(label) + 1:] or "."
+    return path
+
+
 def execute_tool(
     tool_name: str,
     tool_input: dict,
@@ -194,7 +212,8 @@ def tool_grep(pattern: str, path: str, search_paths: list[str], path_labels: dic
     labels = path_labels or {}
     all_matches: list[str] = []
     for repo_path in search_paths:
-        search_dir = _safe_resolve(repo_path, path) if path != "." else repo_path
+        local_path = _strip_label(path, repo_path, labels)
+        search_dir = _safe_resolve(repo_path, local_path) if local_path != "." else repo_path
         if search_dir is None or not os.path.isdir(search_dir):
             continue
         exclude_args = [f"--exclude-dir={d}" for d in _EXCLUDE_DIRS]
@@ -225,14 +244,15 @@ def tool_read_file(path: str, search_paths: list[str], path_labels: dict[str, st
     """Read a file from the first search path where it exists."""
     labels = path_labels or {}
     for repo_path in search_paths:
-        full_path = _safe_resolve(repo_path, path)
+        local_path = _strip_label(path, repo_path, labels)
+        full_path = _safe_resolve(repo_path, local_path)
         if full_path is None:
             continue
         if os.path.isfile(full_path):
             try:
                 content = open(full_path).read()
                 label = labels.get(repo_path, "")
-                header = f"[from {label}] {path}\n\n" if label else ""
+                header = f"[from {label}] {local_path}\n\n" if label else ""
                 if len(content) > _MAX_FILE_SIZE:
                     return header + content[:_MAX_FILE_SIZE] + f"\n... (truncated, {len(content)} chars total)"
                 return header + content
@@ -246,7 +266,8 @@ def tool_list_files(path: str, search_paths: list[str], path_labels: dict[str, s
     labels = path_labels or {}
     sections: list[str] = []
     for repo_path in search_paths:
-        full_path = _safe_resolve(repo_path, path) if path != "." else repo_path
+        local_path = _strip_label(path, repo_path, labels)
+        full_path = _safe_resolve(repo_path, local_path) if local_path != "." else repo_path
         if full_path is None or not os.path.isdir(full_path):
             continue
         entries: list[str] = []
