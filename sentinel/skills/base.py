@@ -109,7 +109,12 @@ _TOOLS = [
                 },
                 "path": {
                     "type": "string",
-                    "description": "Subdirectory to search in (relative to repo root). Default: search entire repo.",
+                    "description": (
+                        "Subdirectory to search in (relative to repo root). "
+                        "Results labeled [owner/repo] come from a cross-repo "
+                        "checkout; prefix a path with that label to search it. "
+                        "Default: search everywhere."
+                    ),
                     "default": ".",
                 },
             },
@@ -128,7 +133,12 @@ _TOOLS = [
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "File path relative to repo root",
+                    "description": (
+                        "File path relative to repo root. For files from a "
+                        "cross-repo checkout (grep results labeled "
+                        "[owner/repo]), prefix the path with that label, e.g. "
+                        "owner/repo/src/file.py."
+                    ),
                 },
             },
             "required": ["path"],
@@ -145,7 +155,11 @@ _TOOLS = [
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Directory path relative to repo root. Default: repo root.",
+                    "description": (
+                        "Directory path relative to repo root. Prefix with a "
+                        "cross-repo label (e.g. owner/repo/subdir) to list a "
+                        "cross-repo checkout. Default: repo root."
+                    ),
                     "default": ".",
                 },
             },
@@ -258,7 +272,16 @@ def tool_read_file(path: str, search_paths: list[str], path_labels: dict[str, st
                 return header + content
             except Exception as e:
                 return f"Error reading {path}: {e}"
-    return f"File not found: {path}"
+    # Error messages are prompts too: tell the model what namespaces exist
+    # so it can self-correct instead of dead-ending.
+    hint = ""
+    known_labels = [l for l in labels.values() if l]
+    if known_labels:
+        hint = (
+            " Paths are relative to the main repo root, or prefix with a "
+            f"cross-repo label to read a checkout: {', '.join(known_labels)}."
+        )
+    return f"File not found: {path}.{hint}" if hint else f"File not found: {path}"
 
 
 def tool_list_files(path: str, search_paths: list[str], path_labels: dict[str, str] | None = None) -> str:
