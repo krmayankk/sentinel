@@ -131,3 +131,73 @@ def test_grep_timeout_returns_message():
                     side_effect=subprocess.TimeoutExpired(cmd="grep", timeout=10)):
             result = tool_grep("hello", ".", [d])
         assert "timed out" in result
+
+# -- Cross-repo labeled path tests --
+# grep labels cross-repo matches "[owner/repo] path/to/file", so models ask
+# read_file/list_files/grep for "owner/repo/path/to/file". The tools must
+# resolve that label prefix back to the checkout (the bug found live on
+# gpu-inference PR #1: grep confirmed a symbol existed cross-repo, read_file
+# then returned "File not found" for the very path grep reported).
+
+def test_read_file_resolves_labeled_cross_repo_path():
+    with tempfile.TemporaryDirectory() as main:
+        with tempfile.TemporaryDirectory() as xrepo:
+            os.makedirs(os.path.join(xrepo, "sentinel", "skills"))
+            with open(os.path.join(xrepo, "sentinel", "skills", "custom.py"), "w") as f:
+                f.write("def load_custom_skills(): ...\n")
+            labels = {xrepo: "owner/sentinel"}
+            result = tool_read_file("owner/sentinel/sentinel/skills/custom.py",
+                                    [main, xrepo], labels)
+            assert "load_custom_skills" in result
+            assert "[from owner/sentinel]" in result
+
+
+def test_read_file_labeled_path_wrong_label_still_not_found():
+    with tempfile.TemporaryDirectory() as main:
+        with tempfile.TemporaryDirectory() as xrepo:
+            with open(os.path.join(xrepo, "a.py"), "w") as f:
+                f.write("X = 1\n")
+            labels = {xrepo: "owner/sentinel"}
+            result = tool_read_file("other/repo/a.py", [main, xrepo], labels)
+            assert "not found" in result.lower()
+
+
+def test_read_file_labeled_path_rejects_traversal():
+    with tempfile.TemporaryDirectory() as main:
+        with tempfile.TemporaryDirectory() as xrepo:
+            labels = {xrepo: "owner/sentinel"}
+            result = tool_read_file("owner/sentinel/../../../etc/passwd",
+                                    [main, xrepo], labels)
+            assert "not found" in result.lower()
+
+
+def test_grep_resolves_labeled_cross_repo_dir():
+    with tempfile.TemporaryDirectory() as main:
+        with tempfile.TemporaryDirectory() as xrepo:
+            os.makedirs(os.path.join(xrepo, "src"))
+            with open(os.path.join(xrepo, "src", "runner.py"), "w") as f:
+                f.write("load_custom_skills(repo_path)\n")
+            labels = {xrepo: "owner/sentinel"}
+            result = tool_grep("load_custom_skills", "owner/sentinel/src",
+                               [main, xrepo], labels)
+            assert "runner.py" in result
+
+
+def test_list_files_resolves_labeled_cross_repo_dir():
+    with tempfile.TemporaryDirectory() as main:
+        with tempfile.TemporaryDirectory() as xrepo:
+            os.makedirs(os.path.join(xrepo, "sentinel"))
+            with open(os.path.join(xrepo, "sentinel", "runner.py"), "w") as f:
+                f.write("")
+            labels = {xrepo: "owner/sentinel"}
+            result = tool_list_files("owner/sentinel/sentinel", [main, xrepo], labels)
+            assert "runner.py" in result
+
+
+def test_read_file_bare_label_reads_nothing_but_does_not_crash():
+    with tempfile.TemporaryDirectory() as main:
+        with tempfile.TemporaryDirectory() as xrepo:
+            labels = {xrepo: "owner/sentinel"}
+            result = tool_read_file("owner/sentinel", [main, xrepo], labels)
+            # label alone resolves to the checkout root (a dir, not a file)
+            assert "not found" in result.lower()
