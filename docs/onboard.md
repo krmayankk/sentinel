@@ -142,6 +142,12 @@ Writes:
 
 ### Phase 4 — Mine (backtest B1; no LLM)
 
+> **Note (2026-07):** the standalone miner specified in [`revbench.md`](revbench.md)
+> (implemented in the separate `revbench` repo) covers this phase's mechanics with stricter labels
+> (comment-region causal check + fix-survival filter). When onboard is built, Phase 4
+> should consume revbench cases rather than reimplement mining — the case format is
+> fixture-compatible by design.
+
 Per [`backtest.md`](backtest.md) § Mining. Walk `git log --first-parent <default-branch>` over
 `--since`; map commits to PRs via GitHub API (`merge_commit_sha` — required for squash-merge
 repos, which is most repos); label four positive classes (reverted, hotfixed, reviewer-caught,
