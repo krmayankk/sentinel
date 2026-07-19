@@ -23,6 +23,10 @@ Add sentinel to any repo. Create `.github/workflows/sentinel.yml`:
 
 ```yaml
 on: [pull_request]
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
 jobs:
   sentinel:
     runs-on: ubuntu-latest
