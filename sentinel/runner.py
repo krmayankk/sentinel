@@ -87,6 +87,7 @@ def run_skills(
                         title=f"Skill {skill.name} failed with an exception",
                         message="The skill raised an unexpected error. See the action logs for details.",
                         suggestion="Check the action logs for the full traceback.",
+                        is_error=True,
                     )
                 ]
             duration_s = time.monotonic() - started

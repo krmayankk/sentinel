@@ -123,3 +123,45 @@ def test_gha_run_url_default_server(monkeypatch):
     monkeypatch.setenv("GITHUB_REPOSITORY", "acme/api")
     monkeypatch.setenv("GITHUB_RUN_ID", "12345")
     assert _gha_run_url() == "https://github.com/acme/api/actions/runs/12345"
+
+
+# -- _check_execution: a green check must mean a review actually happened --
+# Live incident 2026-07-15 (gpu-inference PR #3): API credits exhausted, all
+# five skills errored, each crash became a LOW finding, fail_on was empty,
+# and the check passed in 11s having reviewed nothing.
+
+from entrypoint import _check_execution
+
+
+def _error_finding(skill: str) -> Finding:
+    return Finding(
+        skill=skill, severity=Severity.LOW,
+        title=f"Skill {skill} failed with an exception",
+        message="boom", suggestion="", is_error=True,
+    )
+
+
+def _real_finding(skill: str) -> Finding:
+    return Finding(
+        skill=skill, severity=Severity.HIGH,
+        title="real", message="real", suggestion="",
+    )
+
+
+def test_check_execution_all_errored_fails():
+    results = {"a": [_error_finding("a")], "b": [_error_finding("b")]}
+    with pytest.raises(SystemExit) as exc:
+        _check_execution(results)
+    assert exc.value.code == 1
+
+
+def test_check_execution_partial_error_warns_but_passes(capsys):
+    results = {"a": [_error_finding("a")], "b": [_real_finding("b")]}
+    _check_execution(results)  # must not raise
+    assert "failed to execute" in capsys.readouterr().out
+
+
+def test_check_execution_clean_run_silent(capsys):
+    results = {"a": [_real_finding("a")], "b": []}
+    _check_execution(results)
+    assert capsys.readouterr().out == ""

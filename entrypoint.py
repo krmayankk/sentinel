@@ -102,6 +102,7 @@ def _run_local(args: argparse.Namespace, model: str, fail_on: set[str], event_ty
     _print_findings(results, source=args.diff)
     _maybe_write_job_summary(results, collector.events)
 
+    _check_execution(results)
     _check_blocking(all_findings, effective_fail_on)
 
 
@@ -144,6 +145,7 @@ def _run_gha(model: str, fail_on: set[str], event_type: str = "") -> None:
     _maybe_write_job_summary(results, collector.events)
     post_findings(repo, pr_number, results, github_token, run_url=_gha_run_url())
 
+    _check_execution(results)
     _check_blocking(all_findings, effective_fail_on)
 
 
@@ -258,6 +260,26 @@ def _build_telemetry_sink(config: SentinelConfig, repo_path: str) -> Sink:
     if not p.is_absolute() and repo_path:
         p = Path(repo_path) / p
     return JSONLSink(p)
+
+
+def _check_execution(results: dict[str, list]) -> None:
+    """Fail the check when the review did not actually happen.
+
+    Crash isolation keeps one broken skill from killing the run, but when
+    EVERY skill errored (API credits exhausted, auth failure, outage) there
+    was no review at all — a green check would be vacuous. This is
+    independent of fail_on: it reports infrastructure state, not findings.
+    Partial failures stay non-fatal but are called out loudly.
+    """
+    errored = [name for name, fs in results.items() if any(getattr(f, "is_error", False) for f in fs)]
+    if not errored:
+        return
+    if len(errored) == len(results):
+        print(f"\nsentinel: all {len(errored)} skill(s) failed to execute — "
+              "no review happened. Failing the check (infrastructure error, not findings).")
+        sys.exit(1)
+    print(f"\nsentinel: WARNING — {len(errored)} of {len(results)} skill(s) failed to execute: "
+          f"{', '.join(errored)}. Their checks did not run on this diff.")
 
 
 def _check_blocking(findings: list[Finding], fail_on: set[str]) -> None:
