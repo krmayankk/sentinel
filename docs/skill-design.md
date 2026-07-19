@@ -166,3 +166,39 @@ The doc is the architectural North Star. The PLAN milestones are the order of co
 - Bake-off that proves where open + harness wins: [`docs/bake-off.md`](bake-off.md)
 - Backtest that mines outcome-labeled signals and validates derived skills: [`docs/backtest.md`](backtest.md)
 - Strategic frame and milestone order: [`PLAN.md`](../PLAN.md)
+
+---
+
+## The demotion path: promote mechanical rules DOWN to deterministic linters
+
+The lifecycle above describes judgment moving *up* (raw signals → skills →
+classes). Field use on gpu-inference (2026-07) surfaced the equally important
+move *down*: *when a skill's rule turns out to be mechanically checkable,
+promote it out of the LLM and into the repo's deterministic linters.*
+
+Why: an LLM check is easier to **author** (a sentence vs a script) but costs
+tokens on every PR, is non-deterministic (the same diff can pass and fail on
+different runs — poison for a merge gate), and sits warn-only until the
+fail_on trust ladder is climbed. A grep is free, instant, never flakes, and
+can block on day one. The division of labor that falls out:
+
+- **Linters are the floor** — every rule expressible as file-existence, a
+  grep, or a schema check. Blocking immediately.
+- **Skills are the judgment above the floor** — relationships across files,
+  blast radius, "the artifact exists but couldn't work."
+
+The worked example (gpu-inference PR #5): three rules left the skills for
+`lint.sh` — pool dirs must ship their lifecycle scripts, every GPU profile
+must pin the public model name, fp8 must not appear in the Turing profile.
+The skills were rewritten in the same PR to *skip bare-absence reporting*
+and keep the residue only a model can judge: an `orphans.sh` that exists but
+sweeps the wrong region or swallows API errors; a model name that is pinned
+but overridden into ineffectiveness. LLM turns now go only where a grep
+cannot.
+
+Operationally: on every finding triage, ask *"could a linter have caught
+this deterministically?"* If yes, the fix is two-sided and lands in one PR —
+add the deterministic check, slim the skill. Skills discover rules on real
+diffs; linters retire the mechanical ones; the skill set stays concentrated
+on judgment. This is the complement posture from the README (zizmor, squawk)
+turned into a lifecycle rule for a repo's *own* custom skills.
