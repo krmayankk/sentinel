@@ -22,6 +22,7 @@ class Finding:
     file: str = ""
     line: int = 0
     search_for: str = ""   # deprecated — kept for backward compatibility with existing tests
+    is_error: bool = False  # skill crashed; this is an infrastructure report, not a review finding
 
 
 @dataclass
