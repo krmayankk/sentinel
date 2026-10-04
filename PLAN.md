@@ -12,6 +12,27 @@ This is the plan for **sentinel** — one layer (the reviewer agent, the eval ha
 
 For sentinel's role inside that fleet, see § Current direction and § Non-goals. The rest of this document is the sentinel plan in increasing depth: why the triggering model is changing, the milestone progression, why open-source adoption is first-class, where we are today, and what the bake-off measures.
 
+### Where sentinel sits in the fleet: runtime, control plane, oversight (2026-10)
+
+The fleet needs an **agent runtime** — always-on agents that do the work (write code,
+run builds and deploys, watch CI) and talk to a human in channels like Slack. That layer
+is becoming a commodity: OpenClaw is the de facto open-source runtime (Microsoft's Scout
+is built on it; Meta's Muse is modelled on it), with Hermes Agent (Nous Research) as the
+alternative. As the Scout launch put it, the runtime is free and **the control plane is
+the product**. Sentinel is that control plane's judgment layer.
+
+| Layer | Role | Candidate |
+|---|---|---|
+| Agent runtime | does the work; reports and escalates in channels | OpenClaw (Hermes to compare) — adopt, don't build |
+| Guardrails / control plane | decides what may land; measured by evals | **sentinel** |
+| Mutation path | every change lands through validations + git, PR or not | GitOps |
+| Oversight | human watches, steps in only when needed | Slack / channels via the runtime |
+
+Adoption conditions, given OpenClaw's skill-registry malware history: only skills we
+write (never the public registry), sandboxed runtime (its Landlock/seccomp profiles),
+short-lived scoped credentials, and no change lands without passing sentinel. Not yet
+started; first trial is a runtime that watches PRs/CI and reports — no cloud credentials.
+
 ### The triggering model is decoupling from the PR
 
 Most code review today happens at PR-open. That model is not going away in the next year — but it is fraying at the edges. Merge queues (GitHub native, Graphite, Cursor's pending Graphite integration) move review from before-merge to queue-time. Autonomous coding agents land commits no human authored. Trunk-based teams already gate on tests, not human review. The endpoint of the trajectory is **no PR at all** — code is generated, tests run, gates pass, it lands; if something is wrong, a bug is auto-filed or an autofix branch is opened.
